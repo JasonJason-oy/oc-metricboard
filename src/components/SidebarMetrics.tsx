@@ -252,7 +252,7 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
                                 if (!m) return ""
                                 const parts: string[] = []
                                 if (rowVisible("speed")) parts.push(`⚡${m.liveTps !== null ? m.liveTps.toFixed(1) : "—"}`)
-                                if (rowVisible("ttft")) parts.push(`⏱${m.ttft !== null ? formatDuration(m.ttft) : "--"}`)
+                                if (rowVisible("ttft")) parts.push(`⏱${m.ttft !== null ? " " + formatDuration(m.ttft) : " --"}`)
                                 if (rowVisible("input")) parts.push(`↓${formatTokens(m.inputTokens)}`)
                                 if (rowVisible("output")) parts.push(`↑${formatTokens(m.outputTokens)}`)
                                 return parts.join(" ")

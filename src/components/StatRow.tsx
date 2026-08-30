@@ -33,7 +33,7 @@ export function StatRow(props: StatRowProps) {
     const label = () => typeof props.label === "function" ? props.label() : props.label
     const value = () => typeof props.value === "function" ? props.value() : props.value
     const visible = () => typeof props.visible === "function" ? props.visible() : props.visible !== false
-    const content = () => `${props.icon ? `${props.icon} ` : ""}${value()}`
+    const content = () => `${props.icon ? `${props.icon}  ` : ""}${value()}`
     const syncContent = () => {
         if (disposed) return
         const isVisible = visible()
