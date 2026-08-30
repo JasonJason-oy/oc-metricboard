@@ -1,0 +1,92 @@
+{
+  "name": "oc-metricboard",
+  "version": "0.1.4",
+  "description": "OpenCode TUI sidebar plugin showing real-time LLM metrics (TPS, TTFT, tokens) with sub-agent × model breakdown",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "tui",
+    "metrics",
+    "tps",
+    "ttft",
+    "tokens",
+    "monitoring",
+    "sub-agent",
+    "llm"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JasonJason-oy/oc-metricboard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JasonJason-oy/oc-metricboard/issues"
+  },
+  "homepage": "https://github.com/JasonJason-oy/oc-metricboard#readme",
+  "engines": {
+    "opencode": ">=1.14.22",
+    "node": ">=20.11"
+  },
+  "type": "module",
+  "main": "./src/tui.tsx",
+  "exports": {
+    ".": {
+      "import": "./src/tui.tsx"
+    },
+    "./tui": {
+      "import": "./src/tui.tsx"
+    }
+  },
+  "oc-plugin": [
+    "tui"
+  ],
+  "files": [
+    "src/tui.tsx",
+    "src/tui-preferences.ts",
+    "src/tui-prefs-io.ts",
+    "src/badge-contrast.ts",
+    "src/assistant-progress.ts",
+    "src/collector.ts",
+    "src/collector-state.ts",
+    "src/config.ts",
+    "src/event-bus.ts",
+    "src/event-handlers.ts",
+    "src/logger.ts",
+    "src/metrics.ts",
+    "src/live-speed.ts",
+    "src/turn-state.ts",
+    "src/request-state.ts",
+    "src/request-updates.ts",
+    "src/session-hydration.ts",
+    "src/session-timing.ts",
+    "src/session-tree.ts",
+    "src/types.ts",
+    "src/event-shapes.ts",
+    "src/components/SidebarMetrics.tsx",
+    "src/components/StatRow.tsx",
+    "src/scripts/init-tui-preferences.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "init:prefs": "OPENCODE_TUI_PREFERENCES_FILE=${OPENCODE_TUI_PREFERENCES_FILE:-$HOME/.config/opencode/tui-preferences.jsonc} bun run src/scripts/init-tui-preferences.ts",
+    "prepublishOnly": "npm pack --dry-run"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.4",
+    "@opencode-ai/sdk": "1.18.4",
+    "@types/bun": "latest",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@opentui/core": "0.4.5",
+    "@opentui/solid": "0.4.5",
+    "comment-json": "^5.0.0",
+    "solid-js": "^1.9.12"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "*"
+  }
+}
