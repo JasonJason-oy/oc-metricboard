@@ -1,6 +1,6 @@
 {
   "name": "oc-metricboard",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "OpenCode TUI sidebar plugin showing real-time LLM metrics (TPS, TTFT, tokens) with sub-agent × model breakdown",
   "keywords": [
     "opencode",
