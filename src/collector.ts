@@ -1,6 +1,6 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BarConfig, CacheReadCompleteness, MetricsAggregate, MetricsScope, ModelMetrics, RequestMetrics } from "./types"
-import { getDisplayInputTokens, getDisplayOutputTokens, gateTtft, getTtft } from "./metrics"
+import { getDisplayInputTokens, getDisplayOutputTokens, getTtft } from "./metrics"
 import { registerEventHandlers } from "./event-handlers"
 import type { CollectorState } from "./collector-state"
 import type { MetricsEventApi } from "./event-bus"
@@ -352,7 +352,15 @@ export function createCollector(
 
       const cacheReadCompleteness: CacheReadCompleteness =
         exactCacheCount === 0 ? "unknown" : exactCacheCount === metrics.length ? "exact" : "partial"
-      const ttft = firstTokenTime === null ? null : gateTtft(firstTokenTime - requestStartTime)
+      // Model rows use the same turn-level TTFT as the main aggregate: the
+      // earliest gated turn TTFT across the group's sessions, falling back to
+      // per-request TTFT when no turn timing exists (e.g. sub-agent sessions
+      // whose turn start coincides with their first request).
+      let ttft: number | null = null
+      for (const m of metrics) {
+        const candidate = getTurnTtft(state.turns.get(m.sessionID), getTtft(m))
+        if (candidate !== null && (ttft === null || candidate < ttft)) ttft = candidate
+      }
 
       // Live TPS for this model group
       let liveTps = 0
@@ -551,10 +559,7 @@ export function createCollector(
       // collapse to ~0). Anchor TTFT to the turn's user message instead —
       // stable across all steps within a turn, refreshed on each new turn.
       // Falls back to the per-request measurement when no turn timing exists.
-      const turnTtft = foregroundTurn?.firstTokenTime != null
-        ? gateTtft(foregroundTurn.firstTokenTime - foregroundTurn.turnStartTime)
-        : null
-      const ttft = turnTtft ?? (foregroundRequest ? getTtft(foregroundRequest) : null)
+      const ttft = getTurnTtft(foregroundTurn, foregroundRequest ? getTtft(foregroundRequest) : null)
 
       const result: MetricsAggregate = {
         sessionIDs: contributingSessionIDs.length > 0 ? contributingSessionIDs : [rootID],

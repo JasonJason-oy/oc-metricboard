@@ -1,4 +1,4 @@
-import { getDisplayInputTokens, getDisplayOutputTokens } from "./metrics"
+import { gateTtft, getDisplayInputTokens, getDisplayOutputTokens } from "./metrics"
 import type { RequestMetrics, TurnMetrics } from "./types"
 
 export function createTurnMetrics(sessionID: string, now: number): TurnMetrics {
@@ -93,4 +93,18 @@ export function completeTurn(turn: TurnMetrics, now: number): void {
  */
 export function recordTurnFirstToken(turn: TurnMetrics, now: number): void {
   if (turn.firstTokenTime === null) turn.firstTokenTime = now
+}
+
+/**
+ * Turn-level TTFT (user message → first token), gated. Falls back to the
+ * supplied per-request TTFT when the turn has no first-token timing. This is
+ * the ONLY meaningful TTFT observable from opencode's event stream for
+ * intra-turn steps, so every TTFT display path should prefer it.
+ */
+export function getTurnTtft(turn: TurnMetrics | undefined, fallback: number | null = null): number | null {
+  if (turn?.firstTokenTime != null) {
+    const gated = gateTtft(turn.firstTokenTime - turn.turnStartTime)
+    if (gated !== null) return gated
+  }
+  return fallback
 }
