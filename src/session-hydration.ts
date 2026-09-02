@@ -8,13 +8,36 @@ import { completeTurn, createTurnMetrics, retireRequestIntoTurn } from "./turn-s
 export interface HydrationApi {
   readonly client: {
     readonly session: {
-      messages(options: { readonly id: string }): Promise<unknown>
-      status(options: { readonly id: string }): Promise<unknown>
+      // Shape-agnostic: modern opencode SDK clients expect path params under
+      // `path: { id }`; older runtimes accepted flat keys (`{ id }`).
+      messages(options: { path?: { id: string }; id?: string }): Promise<unknown>
+      status(options: { path?: { id: string }; id?: string }): Promise<unknown>
     }
     readonly message?: {
-      readonly parts?(options: { readonly id: string }): Promise<unknown>
+      parts?(options: { path?: { id: string }; id?: string }): Promise<unknown>
     }
   }
+}
+
+/**
+ * Try the modern SDK arg shape (`{ path: { id } }`) first and fall back to the
+ * legacy flat shape when the response carries an error. The generated SDK
+ * client resolves with `{ data, error }` (ThrowOnError=false), so an
+ * unsupported/legacy arg shape leaves the URL's `{id}` template unsubstituted
+ * and the server rejects it — surfacing only as `response.error`, never a
+ * thrown exception. Swapping shapes on that error restores data flow on both
+ * old and new opencode runtimes.
+ */
+export async function callWithLegacyFallback(
+  modern: () => Promise<unknown>,
+  legacy: () => Promise<unknown>,
+): Promise<unknown> {
+  const modernResponse = await modern()
+  if (isRecord(modernResponse) && modernResponse.error != null) {
+    const legacyResponse = await legacy()
+    if (isRecord(legacyResponse) && legacyResponse.error == null) return legacyResponse
+  }
+  return modernResponse
 }
 
 export interface HydrationState {
@@ -89,7 +112,10 @@ async function observablePartTimes(api: HydrationApi, messageID: string, now: nu
   if (typeof parts !== "function") return { first: null, last: null }
   let values: readonly unknown[]
   try {
-    values = unwrapMessageList(await parts({ id: messageID }))
+    values = unwrapMessageList(await callWithLegacyFallback(
+      () => parts({ path: { id: messageID } }),
+      () => parts({ id: messageID }),
+    ))
   } catch {
     // Part timing is best-effort; unavailable/failed lookups yield null times.
     return { first: null, last: null }
@@ -166,7 +192,10 @@ export interface HydrateSessionInput {
 }
 
 export async function hydrateSession(input: HydrateSessionInput): Promise<boolean> {
-  const rawMessages = unwrapMessageList(await input.api.client.session.messages({ id: input.sessionID }))
+  const rawMessages = unwrapMessageList(await callWithLegacyFallback(
+    () => input.api.client.session.messages({ path: { id: input.sessionID } }),
+    () => input.api.client.session.messages({ id: input.sessionID }),
+  ))
   const infos = rawMessages.map(messageInfo)
   const assistants = infos
     .map(parseAssistantMessage)
