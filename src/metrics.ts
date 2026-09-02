@@ -81,7 +81,7 @@ export function aggregateRequestMetrics(
 
   const cacheReadCompleteness: CacheReadCompleteness =
     exactCacheCount === 0 ? "unknown" : exactCacheCount === metrics.length ? "exact" : "partial"
-  const ttft = firstTokenTime === null ? null : Math.round(firstTokenTime - requestStartTime)
+  const ttft = firstTokenTime === null ? null : gateTtft(firstTokenTime - requestStartTime)
   const sessionIDs = [...new Set(metrics.map((m) => m.sessionID))]
 
   return {
@@ -98,6 +98,7 @@ export function aggregateRequestMetrics(
     liveTps: null,
     isStreaming,
     isComplete,
+    modelBreakdown: [],
   }
 }
 
@@ -112,11 +113,18 @@ export function aggregateRequestMetrics(
  */
 export const MAX_TTFT_MS = 10 * 60 * 1000
 
+/**
+ * Gate a raw TTFT value: non-finite, negative, or beyond MAX_TTFT_MS is not a
+ * meaningful TTFT and is reported as null (rendered "--").
+ */
+export function gateTtft(rawMs: number): number | null {
+  if (!Number.isFinite(rawMs) || rawMs < 0 || rawMs > MAX_TTFT_MS) return null
+  return Math.round(rawMs)
+}
+
 export function getTtft(m: RequestMetrics): number | null {
   if (m.firstTokenTime === null) return null
-  const ttft = m.firstTokenTime - m.requestStartTime
-  if (!Number.isFinite(ttft) || ttft < 0 || ttft > MAX_TTFT_MS) return null
-  return Math.round(ttft)
+  return gateTtft(m.firstTokenTime - m.requestStartTime)
 }
 
 /**

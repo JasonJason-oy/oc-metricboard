@@ -1,6 +1,6 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BarConfig, CacheReadCompleteness, MetricsAggregate, MetricsScope, ModelMetrics, RequestMetrics } from "./types"
-import { getDisplayInputTokens, getDisplayOutputTokens, getTtft } from "./metrics"
+import { getDisplayInputTokens, getDisplayOutputTokens, gateTtft, getTtft } from "./metrics"
 import { registerEventHandlers } from "./event-handlers"
 import type { CollectorState } from "./collector-state"
 import type { MetricsEventApi } from "./event-bus"
@@ -352,7 +352,7 @@ export function createCollector(
 
       const cacheReadCompleteness: CacheReadCompleteness =
         exactCacheCount === 0 ? "unknown" : exactCacheCount === metrics.length ? "exact" : "partial"
-      const ttft = firstTokenTime === null ? null : Math.round(firstTokenTime - requestStartTime)
+      const ttft = firstTokenTime === null ? null : gateTtft(firstTokenTime - requestStartTime)
 
       // Live TPS for this model group
       let liveTps = 0

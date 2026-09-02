@@ -38,13 +38,18 @@ export function currentRequest(input: CurrentRequestInput): RequestMetrics {
       ? startTurn(input.state.turns, input.sessionID, input.now)
       : ensureTurn(input.state.turns, input.sessionID, existing?.requestStartTime ?? input.now)
     if (existing && isDifferentMessage && !startsAfterCompletedTurn) retireRequestIntoTurn(turn, existing)
-    // Keep the existing request's start time when continuing the same turn:
-    // opencode 1.18.x stamps step.started lazily at the first token, so a fresh
-    // `now` here would collapse TTFT to ~0. The user message's created time is
-    // the correct "request submitted" anchor.
-    const requestStartTime = startsAfterCompletedTurn
-      ? input.now
-      : (existing?.requestStartTime ?? input.now)
+    // Keep the existing request's start time ONLY while the existing request
+    // is still an un-streamed placeholder (opencode 1.18.x stamps
+    // step.started lazily at the first token, so the user message's created
+    // time is the correct "request submitted" anchor). Once the previous
+    // request has produced a first token it was a real generation, and a new
+    // messageID is a NEW step: it must NOT inherit the turn's original start
+    // time, otherwise TTFT absorbs every tool execution since the turn began
+    // (huge TTFT in long agentic sessions).
+    const inheritAnchor = !startsAfterCompletedTurn && (existing?.firstTokenTime ?? null) === null
+    const requestStartTime = inheritAnchor
+      ? (existing?.requestStartTime ?? input.now)
+      : input.now
     const current = createFreshMetrics(
       input.sessionID,
       input.messageID,
