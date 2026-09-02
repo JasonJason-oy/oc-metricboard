@@ -303,14 +303,28 @@ export function createCollector(
     return { rootID: requestedSessionID, ids: requestedIDs }
   }
 
-  function aggregateByModel(ids: readonly string[], now: number, scope: MetricsScope): ModelMetrics[] {
+  function aggregateByModel(
+    ids: readonly string[],
+    now: number,
+    scope: MetricsScope,
+    rootID: string,
+    foregroundTurnStart: number,
+  ): ModelMetrics[] {
     // Group requests by (modelID, providerID) — one row per distinct model
-    // across all sub-agent sessions, with a ×N session count.
+    // across all sub-agent sessions, with a ×N session count. Apply the same
+    // foreground-turn membership filter as the token totals: a session whose
+    // last turn predates the foreground turn (e.g. a model the user switched
+    // away from hours ago) would otherwise linger as a stale zombie row that
+    // is absent from the aggregate totals.
     const modelGroups = new Map<string, RequestMetrics[]>()
 
     for (const id of ids) {
       const request = state.requests.get(id)
       if (!request) continue
+      const turn = state.turns.get(id)
+      const belongsToForegroundTurn = id === rootID
+        || Boolean(turn && (turn.turnStartTime >= foregroundTurnStart || !turn.isComplete))
+      if (!belongsToForegroundTurn) continue
 
       // Key: modelID|providerID (model-grouped, not per-session)
       const key = `${request.modelID}|${request.providerID}`
@@ -557,7 +571,7 @@ export function createCollector(
       }
 
       // NEW: Build per-model breakdown for tree scope
-      const modelBreakdown = scope === "tree" ? aggregateByModel(ids, now, scope) : []
+      const modelBreakdown = scope === "tree" ? aggregateByModel(ids, now, scope, rootID, foregroundTurnStart) : []
       // Turn-level TTFT: opencode stamps step.started at the first token, so
       // intra-turn steps cannot measure their own request start (they would
       // collapse to ~0). Anchor TTFT to the turn's user message instead —
