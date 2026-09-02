@@ -546,7 +546,15 @@ export function createCollector(
 
       // NEW: Build per-model breakdown for tree scope
       const modelBreakdown = scope === "tree" ? aggregateByModel(ids, now, scope) : []
-      const ttft = foregroundRequest ? getTtft(foregroundRequest) : null
+      // Turn-level TTFT: opencode stamps step.started at the first token, so
+      // intra-turn steps cannot measure their own request start (they would
+      // collapse to ~0). Anchor TTFT to the turn's user message instead —
+      // stable across all steps within a turn, refreshed on each new turn.
+      // Falls back to the per-request measurement when no turn timing exists.
+      const turnTtft = foregroundTurn?.firstTokenTime != null
+        ? gateTtft(foregroundTurn.firstTokenTime - foregroundTurn.turnStartTime)
+        : null
+      const ttft = turnTtft ?? (foregroundRequest ? getTtft(foregroundRequest) : null)
 
       const result: MetricsAggregate = {
         sessionIDs: contributingSessionIDs.length > 0 ? contributingSessionIDs : [rootID],

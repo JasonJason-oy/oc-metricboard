@@ -37,6 +37,7 @@ export interface FinalizedStepUsage {
 export interface TurnMetrics {
   sessionID: string
   turnStartTime: number
+  firstTokenTime: number | null        // First token of the turn (user message → first delta)
   completeTime: number | null
   finalizedOutputTokens: number
   finalizedSteps: Map<string, FinalizedStepUsage>

@@ -5,6 +5,7 @@ export function createTurnMetrics(sessionID: string, now: number): TurnMetrics {
   return {
     sessionID,
     turnStartTime: now,
+    firstTokenTime: null,
     completeTime: null,
     finalizedOutputTokens: 0,
     finalizedSteps: new Map(),
@@ -82,4 +83,14 @@ export function turnInputTokens(turn: TurnMetrics, request: RequestMetrics | und
 export function completeTurn(turn: TurnMetrics, now: number): void {
   turn.isComplete = true
   turn.completeTime = now
+}
+
+/**
+ * Record the turn's first token instant (once). opencode stamps step.started
+ * at the first token, so intra-turn steps cannot measure their own request
+ * start; the turn-level anchor (user message → first delta) is the only
+ * meaningful TTFT observable from the event stream.
+ */
+export function recordTurnFirstToken(turn: TurnMetrics, now: number): void {
+  if (turn.firstTokenTime === null) turn.firstTokenTime = now
 }

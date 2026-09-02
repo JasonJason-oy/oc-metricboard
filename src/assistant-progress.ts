@@ -4,6 +4,7 @@ import { currentRequest } from "./request-state"
 import { eventAggregateID, eventID, eventProperties, stringEventProperty } from "./event-bus"
 import type { EventHandlerContext } from "./collector-state"
 import { recordLiveTokens } from "./live-speed"
+import { ensureTurn, recordTurnFirstToken } from "./turn-state"
 
 export interface AssistantProgressPart {
   readonly partID: string
@@ -26,6 +27,7 @@ function applyTokenDelta(
   if (state.turns.get(sessionID)?.finalizedSteps.has(messageID)) return
   const current = currentRequest({ state, actions, sessionID, messageID, now })
   if (current.firstTokenTime === null) current.firstTokenTime = now
+  recordTurnFirstToken(ensureTurn(state.turns, sessionID, now), now)
   if (deltaTokens > 0) {
     current.estimatedOutputTokens += deltaTokens
     current.lastDeltaTime = now

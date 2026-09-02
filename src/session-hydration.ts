@@ -233,6 +233,11 @@ export async function hydrateSession(input: HydrateSessionInput): Promise<boolea
     input.now,
   ) ?? requestStartTime
   const turn = createTurnMetrics(input.sessionID, turnStartTime)
+  // Turn-level TTFT anchor: the first trailing assistant's createdTime is
+  // stamped at its first token, so turnStart → that instant is the hydrated
+  // turn's time-to-first-token. Fall back to the live request's first token.
+  turn.firstTokenTime = toPerformanceTime(trailingAssistants[0]?.createdTime, input.now)
+    ?? current.firstTokenTime
   for (const step of trailingAssistants) {
     if (!step.tokens || !hasPositiveAssistantTokens(step.tokens)) continue
     const stepStart = toPerformanceTime(step.createdTime, input.now) ?? turnStartTime
