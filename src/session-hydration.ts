@@ -235,6 +235,7 @@ export async function hydrateSession(input: HydrateSessionInput): Promise<boolea
     await input.api.client.session.status({ id: input.sessionID }),
     input.sessionID,
   ))
+  log(`hydrate session=${input.sessionID.slice(0, 8)} status='${sessionStatus}'`)
   const shouldReuseExisting = existing?.messageID === assistant.messageID
 
   const current = shouldReuseExisting ? existing : createFreshMetrics(
@@ -287,7 +288,12 @@ export async function hydrateSession(input: HydrateSessionInput): Promise<boolea
     applyAssistantTokens(stepMetrics, step.tokens)
     retireRequestIntoTurn(turn, stepMetrics)
   }
-  if (sessionStatus === "idle") completeTurn(turn, completedTime ?? input.now)
+  // Turn completion: the session-status lookup is unreliable across host SDK
+  // dialects (may resolve to an unrecognizable shape → status ''). The last
+  // assistant message's own completed flag is authoritative: if it finished,
+  // its turn is over. An in-flight resumed message (completed=false) keeps
+  // the turn open.
+  if (sessionStatus === "idle" || current.isComplete) completeTurn(turn, completedTime ?? input.now)
   input.state.turns.set(input.sessionID, turn)
 
   // Write-point race guard: the checks above ran before several awaits. By
