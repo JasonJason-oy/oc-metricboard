@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 /** @jsxRuntime automatic */
 import { createMemo, createSignal, onCleanup } from "solid-js"
-import type { BoxRenderable } from "@opentui/core"
+import type { BoxRenderable, TextRenderable } from "@opentui/core"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { BarConfig, MetricsAggregate, ModelMetrics } from "../types"
 import type { MetricsCollector } from "../collector"
@@ -93,6 +93,46 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
         return props.controller.collapsed()
     })
     const headerLabel = () => props.controller.prefs().section.label
+    // This runtime's JSX is non-reactive: the header <text> renders once at
+    // mount, so the ▶/▼ arrow would freeze on its initial value. Two static
+    // bold nodes (collapsed/expanded) are pre-rendered and toggled
+    // imperatively through registerSync — the same mechanism as the rows.
+    // Hidden node must be zero-sized in BOTH axes: visible=false only
+    // suppresses painting, while yoga still reserves its box, which would
+    // offset the visible label. No value imports from @opentui/core beyond
+    // what mount already exercised, so version drift can't break the plugin.
+    let collapsedHeaderNode: TextRenderable | undefined
+    let expandedHeaderNode: TextRenderable | undefined
+    const syncHeader = () => {
+        if (disposed) return
+        const isCollapsed = collapsed()
+        for (const [node, visible] of [
+            [collapsedHeaderNode, isCollapsed],
+            [expandedHeaderNode, !isCollapsed],
+        ] as const) {
+            if (!node || node.isDestroyed) continue
+            try {
+                node.visible = visible
+                if (visible) {
+                    node.width = "auto"
+                    node.height = "auto"
+                } else {
+                    node.width = 0
+                    node.height = 0
+                }
+            } catch { /* cosmetic — ignore layout failures */ }
+        }
+    }
+    const unregisterHeaderSync = registerRowSync(syncHeader)
+    onCleanup(() => unregisterHeaderSync())
+    const attachCollapsedHeaderNode = (node: TextRenderable) => {
+        collapsedHeaderNode = node
+        syncHeader()
+    }
+    const attachExpandedHeaderNode = (node: TextRenderable) => {
+        expandedHeaderNode = node
+        syncHeader()
+    }
     const toggleCollapsed = () => props.controller.toggleCollapsed()
     const attachBoxToggle = (node: BoxRenderable) => {
         node.onMouseDown = toggleCollapsed
@@ -147,9 +187,17 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
                 ref={attachBoxToggle}
             >
                 <text
+                    ref={attachCollapsedHeaderNode}
+                    fg={props.theme.text}
+                    visible={false}
+                >
+                    <b>▶ {headerLabel()}</b>
+                </text>
+                <text
+                    ref={attachExpandedHeaderNode}
                     fg={props.theme.text}
                 >
-                    <b>{collapsed() ? "▶ " : "▼ "}{headerLabel()}</b>
+                    <b>▼ {headerLabel()}</b>
                 </text>
             </box>
 
