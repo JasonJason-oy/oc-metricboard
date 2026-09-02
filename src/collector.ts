@@ -196,9 +196,9 @@ export function createCollector(
           const responses = await Promise.all(parents.map(async (parentID) => ({
             parentID,
             response: await callWithFallback([
+              () => treeHydrationApi.client.session.children({ sessionID: parentID }),
               () => treeHydrationApi.client.session.children({ path: { sessionID: parentID } }),
               () => treeHydrationApi.client.session.children({ path: { id: parentID } }),
-              () => treeHydrationApi.client.session.children({ sessionID: parentID }),
             ]),
           })))
           if (disposed) return

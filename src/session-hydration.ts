@@ -4,6 +4,7 @@ import { applyAssistantTokens, hasPositiveAssistantTokens } from "./request-upda
 import type { RequestMetrics, TurnMetrics } from "./types"
 import type { SessionTiming } from "./session-timing"
 import { completeTurn, createTurnMetrics, retireRequestIntoTurn } from "./turn-state"
+import { log } from "./logger"
 
 export interface HydrationApi {
   readonly client: {
@@ -21,21 +22,25 @@ export interface HydrationApi {
 
 /**
  * Try SDK arg shapes in order until one resolves WITHOUT an error field. The
- * host TUI client is the generated hey-api SDK (ThrowOnError=false): a wrong
- * arg shape leaves the URL's path template unsubstituted (e.g. literal
- * `{sessionID}`), the server rejects the request, and the failure surfaces
- * ONLY as the response's `error` field — never a thrown exception. The TUI
- * client currently speaks the v1 SDK dialect (`{ path: { sessionID } }`);
- * v2 (`{ path: { id } }`) and legacy flat shapes are kept as fallbacks so the
- * plugin survives opencode SDK upgrades.
+ * host TUI client (confirmed at runtime on opencode 1.18.26) speaks the flat
+ * original-SDK dialect: path params are TOP-LEVEL keys substituted into the
+ * URL template — `session.messages/children({ sessionID })`,
+ * `message.parts({ id })`. hey-api nested shapes (`{ path: { … } }`, v1/v2)
+ * are kept as fallbacks so the plugin survives opencode SDK upgrades. A wrong
+ * shape leaves the URL template unsubstituted (literal `{sessionID}`) and the
+ * server rejects it, surfacing only as `response.error` — never an exception.
  */
 export async function callWithFallback(attempts: Array<() => Promise<unknown>>): Promise<unknown> {
   let lastResponse: unknown = null
-  for (const attempt of attempts) {
-    const response = await attempt()
-    if (!isRecord(response) || response.error == null) return response
+  for (let i = 0; i < attempts.length; i++) {
+    const response = await attempts[i]()
+    if (!isRecord(response) || response.error == null) {
+      if (i > 0) log(`sdk arg shapes: attempt ${i + 1}/${attempts.length} succeeded`)
+      return response
+    }
     lastResponse = response
   }
+  log(`sdk arg shapes: all ${attempts.length} failed (response.error)`)
   return lastResponse
 }
 
@@ -112,9 +117,9 @@ async function observablePartTimes(api: HydrationApi, messageID: string, now: nu
   let values: readonly unknown[]
   try {
     values = unwrapMessageList(await callWithFallback([
+      () => parts({ id: messageID }),
       () => parts({ path: { messageID: messageID } }),
       () => parts({ path: { id: messageID } }),
-      () => parts({ id: messageID }),
     ]))
   } catch {
     // Part timing is best-effort; unavailable/failed lookups yield null times.
@@ -193,9 +198,10 @@ export interface HydrateSessionInput {
 
 export async function hydrateSession(input: HydrateSessionInput): Promise<boolean> {
   const rawMessages = unwrapMessageList(await callWithFallback([
+    () => input.api.client.session.messages({ sessionID: input.sessionID }),
+    () => input.api.client.session.messages({ id: input.sessionID }),
     () => input.api.client.session.messages({ path: { sessionID: input.sessionID } }),
     () => input.api.client.session.messages({ path: { id: input.sessionID } }),
-    () => input.api.client.session.messages({ id: input.sessionID }),
   ]))
   const infos = rawMessages.map(messageInfo)
   const assistants = infos
