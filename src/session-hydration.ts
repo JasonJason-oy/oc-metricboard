@@ -8,36 +8,35 @@ import { completeTurn, createTurnMetrics, retireRequestIntoTurn } from "./turn-s
 export interface HydrationApi {
   readonly client: {
     readonly session: {
-      // Shape-agnostic: modern opencode SDK clients expect path params under
-      // `path: { id }`; older runtimes accepted flat keys (`{ id }`).
-      messages(options: { path?: { id: string }; id?: string }): Promise<unknown>
-      status(options: { path?: { id: string }; id?: string }): Promise<unknown>
+      // Shape-agnostic: the v1 SDK client routes use /session/{sessionID}/…,
+      // v2 uses /session/{id}/…, and very old runtimes accepted flat keys.
+      messages(options: { path?: { sessionID?: string; id?: string }; id?: string; sessionID?: string }): Promise<unknown>
+      status(options: { path?: { sessionID?: string; id?: string }; id?: string; sessionID?: string }): Promise<unknown>
     }
     readonly message?: {
-      parts?(options: { path?: { id: string }; id?: string }): Promise<unknown>
+      parts?(options: { path?: { messageID?: string; id?: string }; id?: string }): Promise<unknown>
     }
   }
 }
 
 /**
- * Try the modern SDK arg shape (`{ path: { id } }`) first and fall back to the
- * legacy flat shape when the response carries an error. The generated SDK
- * client resolves with `{ data, error }` (ThrowOnError=false), so an
- * unsupported/legacy arg shape leaves the URL's `{id}` template unsubstituted
- * and the server rejects it — surfacing only as `response.error`, never a
- * thrown exception. Swapping shapes on that error restores data flow on both
- * old and new opencode runtimes.
+ * Try SDK arg shapes in order until one resolves WITHOUT an error field. The
+ * host TUI client is the generated hey-api SDK (ThrowOnError=false): a wrong
+ * arg shape leaves the URL's path template unsubstituted (e.g. literal
+ * `{sessionID}`), the server rejects the request, and the failure surfaces
+ * ONLY as the response's `error` field — never a thrown exception. The TUI
+ * client currently speaks the v1 SDK dialect (`{ path: { sessionID } }`);
+ * v2 (`{ path: { id } }`) and legacy flat shapes are kept as fallbacks so the
+ * plugin survives opencode SDK upgrades.
  */
-export async function callWithLegacyFallback(
-  modern: () => Promise<unknown>,
-  legacy: () => Promise<unknown>,
-): Promise<unknown> {
-  const modernResponse = await modern()
-  if (isRecord(modernResponse) && modernResponse.error != null) {
-    const legacyResponse = await legacy()
-    if (isRecord(legacyResponse) && legacyResponse.error == null) return legacyResponse
+export async function callWithFallback(attempts: Array<() => Promise<unknown>>): Promise<unknown> {
+  let lastResponse: unknown = null
+  for (const attempt of attempts) {
+    const response = await attempt()
+    if (!isRecord(response) || response.error == null) return response
+    lastResponse = response
   }
-  return modernResponse
+  return lastResponse
 }
 
 export interface HydrationState {
@@ -112,10 +111,11 @@ async function observablePartTimes(api: HydrationApi, messageID: string, now: nu
   if (typeof parts !== "function") return { first: null, last: null }
   let values: readonly unknown[]
   try {
-    values = unwrapMessageList(await callWithLegacyFallback(
+    values = unwrapMessageList(await callWithFallback([
+      () => parts({ path: { messageID: messageID } }),
       () => parts({ path: { id: messageID } }),
       () => parts({ id: messageID }),
-    ))
+    ]))
   } catch {
     // Part timing is best-effort; unavailable/failed lookups yield null times.
     return { first: null, last: null }
@@ -192,10 +192,11 @@ export interface HydrateSessionInput {
 }
 
 export async function hydrateSession(input: HydrateSessionInput): Promise<boolean> {
-  const rawMessages = unwrapMessageList(await callWithLegacyFallback(
+  const rawMessages = unwrapMessageList(await callWithFallback([
+    () => input.api.client.session.messages({ path: { sessionID: input.sessionID } }),
     () => input.api.client.session.messages({ path: { id: input.sessionID } }),
     () => input.api.client.session.messages({ id: input.sessionID }),
-  ))
+  ]))
   const infos = rawMessages.map(messageInfo)
   const assistants = infos
     .map(parseAssistantMessage)

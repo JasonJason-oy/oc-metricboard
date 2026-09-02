@@ -4,7 +4,7 @@ import { getDisplayInputTokens, getDisplayOutputTokens, getTtft } from "./metric
 import { registerEventHandlers } from "./event-handlers"
 import type { CollectorState } from "./collector-state"
 import type { MetricsEventApi } from "./event-bus"
-import { hydrateSession, isHydrationApi, callWithLegacyFallback, type HydrationApi } from "./session-hydration"
+import { hydrateSession, isHydrationApi, callWithFallback, type HydrationApi } from "./session-hydration"
 import { createSessionTree } from "./session-tree"
 import { getScopeElapsedMs, getSessionElapsedMs, startSessionTiming, stopSessionTiming } from "./session-timing"
 import { clearLiveSpeed, getLiveTps } from "./live-speed"
@@ -16,7 +16,7 @@ type MetricsHydrationApi = MetricsEventApi & HydrationApi
 interface TreeHydrationApi {
   readonly client: {
     readonly session: {
-      children(options: { path?: { id: string }; sessionID?: string }): Promise<unknown>
+      children(options: { path?: { sessionID?: string; id?: string }; sessionID?: string }): Promise<unknown>
     }
   }
 }
@@ -195,10 +195,11 @@ export function createCollector(
         while (parents.length > 0) {
           const responses = await Promise.all(parents.map(async (parentID) => ({
             parentID,
-            response: await callWithLegacyFallback(
+            response: await callWithFallback([
+              () => treeHydrationApi.client.session.children({ path: { sessionID: parentID } }),
               () => treeHydrationApi.client.session.children({ path: { id: parentID } }),
               () => treeHydrationApi.client.session.children({ sessionID: parentID }),
-            ),
+            ]),
           })))
           if (disposed) return
           const next: string[] = []
