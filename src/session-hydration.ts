@@ -138,9 +138,8 @@ async function observablePartTimes(api: HydrationApi, messageID: string, now: nu
   return { first: toPerformanceTime(firstWall, now), last: toPerformanceTime(lastWall, now) }
 }
 
-function hydrateSessionTiming(
+export function hydrateSessionTiming(
   rawMessages: readonly unknown[],
-  status: string,
   now: number,
 ): SessionTiming {
   const intervals: Array<{ start: number; end: number }> = []
@@ -183,10 +182,16 @@ function hydrateSessionTiming(
     }
   }
 
-  const activeSince = status === "idle" ? null : toPerformanceTime(groupStartWall, now)
-  if (activeSince === null && groupStartWall !== null) closeGroup()
+  // Hydration NEVER leaves an open active interval. The session-status lookup
+  // is unreliable across host SDK dialects (may resolve to '' — see the turn
+  // completion fix), and an open interval anchored to a pre-process wall time
+  // becomes {start: negative, end: now} in performance-time: its span then
+  // includes the entire era before this TUI process existed, inflating the
+  // Session readout by the session's full age and growing in real time while
+  // idle. Activity accounting resumes exclusively via live busy/idle events.
+  if (groupStartWall !== null) closeGroup()
   const elapsedMs = Math.round(intervals.reduce((total, interval) => total + Math.max(0, interval.end - interval.start), 0))
-  return { elapsedMs, activeSince, intervals }
+  return { elapsedMs, activeSince: null, intervals }
 }
 
 export interface HydrateSessionInput {
@@ -316,9 +321,18 @@ export async function hydrateSession(input: HydrateSessionInput): Promise<boolea
     input.state.sessionModels.set(input.sessionID, { modelID: assistant.modelID, providerID: assistant.providerID })
   }
   if (!input.state.sessionTimings.has(input.sessionID)) {
-    input.state.sessionTimings.set(
-      input.sessionID,
-      hydrateSessionTiming(rawMessages, sessionStatus, input.now),
+    const timing = hydrateSessionTiming(rawMessages, input.now)
+    input.state.sessionTimings.set(input.sessionID, timing)
+    // Debug: timing hydration summary — pinpoints where inflated Session
+    // elapsed values come from (initial value vs runtime accumulation).
+    const intervals = timing.intervals ?? []
+    const maxSpan = intervals.reduce((m, iv) => Math.max(m, iv.end - iv.start), 0)
+    const oldestStart = intervals.reduce((m, iv) => Math.min(m, iv.start), Number.POSITIVE_INFINITY)
+    log(
+      `timing hydrate session=${input.sessionID.slice(0, 8)} elapsed=${Math.round(timing.elapsedMs)}ms`
+      + ` activeSinceAge=${timing.activeSince === null ? "null" : `${Math.round(input.now - timing.activeSince)}ms`}`
+      + ` intervals=${intervals.length} maxSpan=${Math.round(maxSpan)}ms`
+      + ` oldestStartAge=${Number.isFinite(oldestStart) ? `${Math.round(input.now - oldestStart)}ms` : "n/a"}`,
     )
   }
   return true
