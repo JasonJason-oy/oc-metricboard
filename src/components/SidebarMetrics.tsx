@@ -329,7 +329,7 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
                                 unregisterWrapperSync()
                             })
                             return (
-                                <box key={i} ref={attachWrapper} width="100%" flexDirection="column" marginLeft={1} marginTop={1}>
+                                <box ref={attachWrapper} width="100%" flexDirection="column" marginLeft={1} marginTop={1}>
                                     <StatRow
                                         theme={props.theme}
                                         label={modelLabel}
