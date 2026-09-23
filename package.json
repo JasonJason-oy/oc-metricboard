@@ -42,6 +42,7 @@
   ],
   "files": [
     "src/tui.tsx",
+    "src/tui-v2.tsx",
     "src/tui-preferences.ts",
     "src/tui-prefs-io.ts",
     "src/badge-contrast.ts",

@@ -1,0 +1,285 @@
+/**
+ * OpenCode V2 TUI entry (dual-host compatibility).
+ *
+ * OpenCode V2 (2.0.x) rejects V1-only `{ id, tui }` modules: its TUI loader
+ * validates `{ id, setup }`. One `./tui` module exporting BOTH keys satisfies
+ * both hosts — each reads its own key and ignores the other (the pattern
+ * proven by oh-my-opencode-slim and opencode-tps-meter).
+ *
+ * V2 surface mapping used here (vs the V1 `tui(api, options, meta)` entry in
+ * src/tui.tsx):
+ *
+ *   api.event.on(type, handler)        -> ctx.data.on(v2Type, handler)
+ *   api.slots.register({ slots })      -> ctx.ui.slot({ append, render })
+ *   slot props.session_id (required)   -> render input.sessionID (optional)
+ *   api.renderer.requestRender()       -> ctx.renderer?.requestRender?.()
+ *   api.lifecycle.onDispose(fn)        -> cleanup returned from setup
+ *
+ * Event vocabulary (V2 -> the V1 names the collector understands):
+ *
+ *   session.text.delta            -> session.next.text.delta
+ *   session.reasoning.delta       -> session.next.reasoning.delta
+ *   session.step.started          -> session.next.step.started
+ *   session.step.ended            -> session.next.step.ended
+ *   session.idle                  -> session.idle          (unchanged)
+ *   session.execution.started     -> session.status (busy) (turn start)
+ *
+ * The V2 payloads are field-compatible with the V1 parsers
+ * (`assistantMessageID`, `tokens: { input, output, reasoning,
+ * cache: { read, write } }`), so events are forwarded as-is; only
+ * execution.started needs a real translation. The event shim hides all of
+ * this behind the V1 `api.event.on` contract, so the collector and every
+ * event handler run unmodified on both hosts.
+ *
+ * Deliberately absent in the V2 port (degrades gracefully):
+ * - session hydration / historical token restore (the V2 client dialect
+ *   differs; live tracking is unaffected) — the collector's hydration API
+ *   check simply fails, so no failing requests are fired
+ * - message.updated passthrough (user-message turn anchor) — turn start is
+ *   covered by session.execution.started / step.started
+ */
+/** @jsxImportSource @opentui/solid */
+/** @jsxRuntime automatic */
+import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
+import { createCollector, type MetricsCollector } from "./collector"
+import { getConfig } from "./config"
+import { log } from "./logger"
+import { SidebarMetrics } from "./components/SidebarMetrics"
+import {
+    computeEffectiveOrder,
+    createMetricsSidebarController,
+    DEFAULT_SLOT_ORDER,
+    PLUGIN_KEY,
+    resolveMetricsPrefs,
+} from "./tui-preferences"
+import { readTuiPreferencesFileSync } from "./tui-prefs-io"
+
+// ---------------------------------------------------------------------------
+// Minimal structural types for the V2 TUI context (mirrors @opencode/plugin/tui
+// beta; declared locally so the package keeps zero hard deps on the V2 scope).
+// ---------------------------------------------------------------------------
+
+interface V2Theme {
+    readonly text?: {
+        readonly default?: unknown
+        readonly subdued?: unknown
+        readonly feedback?: Readonly<Record<string, { readonly default?: unknown } | undefined>>
+    }
+    readonly [key: string]: unknown
+}
+
+interface V2EventLike {
+    readonly type?: unknown
+    readonly data?: unknown
+    readonly [key: string]: unknown
+}
+
+interface V2Context {
+    readonly options?: Readonly<Record<string, unknown>>
+    readonly theme?: V2Theme
+    readonly renderer?: { readonly requestRender?: () => void }
+    readonly data?: {
+        readonly on: (type: string, handler: (event: unknown) => void) => () => void
+        readonly session?: {
+            readonly root: (sessionID: string) => string
+            readonly family: (sessionID: string) => string[]
+        }
+    }
+    readonly ui: {
+        readonly slot: (claim: {
+            readonly render: (input: { readonly sessionID?: string; readonly mode?: string }) => unknown
+            readonly append?: string
+            readonly after?: string
+        }) => () => void
+    }
+}
+
+type V2Cleanup = () => void
+
+// ---------------------------------------------------------------------------
+// Event bridge: V1 api.event.on contract over V2 ctx.data.on.
+// ---------------------------------------------------------------------------
+
+/** V1 event name -> V2 event name. `null` = no V2 equivalent (no-op). */
+const V2_EVENT_MAP: Readonly<Record<string, string | null>> = {
+    "message.part.delta": null,
+    "message.part.updated": null,
+    "message.updated": null,
+    "session.created": "session.created",
+    "session.updated": "session.updated",
+    "session.deleted": "session.deleted",
+    "session.status": null,
+    "session.idle": "session.idle",
+    "session.next.text.delta": "session.text.delta",
+    "session.next.reasoning.delta": "session.reasoning.delta",
+    "session.next.step.started": "session.step.started",
+    "session.next.step.ended": "session.step.ended",
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function str(value: unknown): string {
+    return typeof value === "string" ? value : ""
+}
+
+/**
+ * `session.execution.started` = "the user's prompt was admitted and work
+ * started" — the V2 equivalent of V1's `session.status -> busy`, which drives
+ * turn start and session timing.
+ */
+function translateExecutionStarted(event: V2EventLike): unknown {
+    const data = isRecord(event.data) ? event.data : {}
+    const sessionID = str(data.sessionID)
+    if (!sessionID) return null
+    return { type: "session.status", properties: { sessionID, status: { type: "busy" } } }
+}
+
+function eventSessionID(event: unknown): string {
+    if (!isRecord(event)) return ""
+    return str(isRecord(event.data) ? event.data.sessionID : undefined)
+}
+
+interface CollectorHolder {
+    collector: MetricsCollector | null
+}
+
+function createV1EventShim(ctx: V2Context, holder: CollectorHolder): MetricsEventApi {
+    let lastFamilySyncAt = -Infinity
+    const syncFamily = (sessionID: string): void => {
+        const data = ctx.data
+        try {
+            if (!holder.collector || !data?.session || !sessionID) return
+            const now = Date.now()
+            if (now - lastFamilySyncAt < 2_000) return
+            lastFamilySyncAt = now
+            const rootID = data.session.root(sessionID)
+            const ids = data.session.family(rootID) ?? []
+            for (const id of ids) {
+                if (id !== rootID) holder.collector.setSessionParent(id, rootID)
+            }
+        } catch {
+            // Family attribution is best-effort; the root session works without it.
+        }
+    }
+
+    return {
+        event: {
+            on(type: string, handler: (event: unknown) => void): () => void {
+                // V1 hosts subscribe `.1`/`.2` delivery variants; V2 has none.
+                if (/\.1$|\.2$/.test(type)) return () => {}
+                const v2Type = V2_EVENT_MAP[type]
+                if (!v2Type) return () => {}
+                let unsub: (() => void) | undefined
+                try {
+                    unsub = ctx.data.on(v2Type, (event: unknown) => {
+                        try {
+                            if (v2Type === "session.execution.started") {
+                                const translated = translateExecutionStarted(event as V2EventLike)
+                                if (translated !== null) handler(translated)
+                                return
+                            }
+                            syncFamily(eventSessionID(event))
+                            handler(event)
+                        } catch (error) {
+                            // One malformed event must never tear down the handler chain.
+                            log(`v2 event dispatch failed: ${String(error)}`)
+                        }
+                    })
+                } catch (error) {
+                    log(`v2 event subscribe failed (${type}): ${String(error)}`)
+                    return () => {}
+                }
+                return typeof unsub === "function" ? unsub : () => {}
+            },
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Theme adapter: components read V1 flat tokens.
+// ---------------------------------------------------------------------------
+
+function pickThemeToken(theme: V2Theme | undefined, paths: ReadonlyArray<ReadonlyArray<string>>): unknown {
+    for (const path of paths) {
+        let value: unknown = theme
+        for (const key of path) {
+            if (!isRecord(value)) {
+                value = undefined
+                break
+            }
+            value = value[key]
+        }
+        if (value !== undefined && value !== null) return value
+    }
+    return undefined
+}
+
+function v1ThemeFromV2(theme: V2Theme | undefined): TuiThemeCurrent {
+    return {
+        text: pickThemeToken(theme, [["text", "default"]]),
+        textMuted: pickThemeToken(theme, [["text", "subdued"]]),
+        accent: pickThemeToken(theme, [["text", "feedback", "info", "default"], ["text", "default"]]),
+        warning: pickThemeToken(theme, [["text", "feedback", "warning", "default"]]),
+        success: pickThemeToken(theme, [["text", "feedback", "success", "default"]]),
+    } as TuiThemeCurrent
+}
+
+// ---------------------------------------------------------------------------
+// V2 setup
+// ---------------------------------------------------------------------------
+
+export function setupTuiV2(ctx: V2Context): V2Cleanup {
+    const config = getConfig()
+    log("opencode-metrics v2 entry initialized")
+
+    const seedRoot = readTuiPreferencesFileSync()
+    const effectiveOrder = computeEffectiveOrder(seedRoot, PLUGIN_KEY, DEFAULT_SLOT_ORDER)
+    const prefs = resolveMetricsPrefs(seedRoot)
+    const requestRender = (): void => {
+        try {
+            ctx.renderer?.requestRender?.()
+        } catch { /* rendering is host-driven in v2; ignore failures */ }
+    }
+    const controller = createMetricsSidebarController(prefs, requestRender)
+
+    const holder: CollectorHolder = { collector: null }
+    const collector = createCollector(createV1EventShim(ctx, holder), config, log)
+    holder.collector = collector
+
+    const theme = v1ThemeFromV2(ctx.theme)
+    const disposers: Array<() => void> = []
+
+    // The sidebar is the ONE surface that must exist; claim it outside any guard.
+    disposers.push(
+        ctx.ui.slot({
+            append: "sidebar.content",
+            render: (input) => {
+                const sessionID = input?.sessionID ?? ""
+                if (!sessionID) return <box />
+                return (
+                    <SidebarMetrics
+                        sessionID={sessionID}
+                        collector={collector}
+                        refreshIntervalMs={config.refreshIntervalMs}
+                        barConfig={config}
+                        theme={theme}
+                        controller={controller}
+                        requestRender={requestRender}
+                    />
+                )
+            },
+        })
+    )
+
+    return () => {
+        for (const dispose of disposers) {
+            try {
+                dispose()
+            } catch { /* ignore */ }
+        }
+        disposers.length = 0
+        collector.dispose()
+    }
+}

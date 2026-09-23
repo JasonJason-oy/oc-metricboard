@@ -49,6 +49,8 @@ export interface MetricsCollector {
   getAggregate(sessionID: string, scope: MetricsScope, now?: number): MetricsAggregate | null
   getSessionElapsedMs(sessionID: string, scope?: MetricsScope, now?: number): number
   getChildSessionCount(sessionID: string): number
+  /** Registers a parent/child relation for the session tree (V2 host bridge). */
+  setSessionParent(childID: string, parentID: string | null): void
   subscribe(listener: MetricsListener): () => void
   dispose(): void
 }
@@ -610,6 +612,10 @@ export function createCollector(
     },
     getChildSessionCount(sessionID: string): number {
       return state.sessionTree.getChildSessionCount(sessionID)
+    },
+    setSessionParent(childID: string, parentID: string | null): void {
+      if (!childID) return
+      state.sessionTree.setParent(childID, parentID)
     },
     subscribe(listener: MetricsListener): () => void {
       listeners.add(listener)

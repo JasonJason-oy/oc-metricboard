@@ -14,6 +14,7 @@ import {
     resolveMetricsPrefs,
 } from "./tui-preferences"
 import { readTuiPreferencesFileSync } from "./tui-prefs-io"
+import { setupTuiV2 } from "./tui-v2"
 
 const plugin: TuiPlugin = async (api: TuiPluginApi, _options: PluginOptions | undefined, _meta: TuiPluginMeta) => {
     const config = getConfig()
@@ -52,9 +53,16 @@ const plugin: TuiPlugin = async (api: TuiPluginApi, _options: PluginOptions | un
     log("opencode-metrics sidebar initialized")
 }
 
-const pluginModule: { id: string; tui: TuiPlugin } = {
+/**
+ * Dual-host TUI module:
+ * - OpenCode V1 (1.18.x) validates `{ id, tui }` and ignores extra keys.
+ * - OpenCode V2 (2.0.x) validates `{ id, setup }` and rejects V1-only modules.
+ * Exporting both keys from one `./tui` module satisfies both hosts.
+ */
+const pluginModule: { id: string; tui: TuiPlugin; setup: typeof setupTuiV2 } = {
     id: "oc-metricboard",
     tui: plugin,
+    setup: setupTuiV2,
 }
 
 export default pluginModule
