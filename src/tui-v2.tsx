@@ -40,8 +40,8 @@
  */
 /** @jsxImportSource @opentui/solid */
 /** @jsxRuntime automatic */
-import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { createCollector, type MetricsCollector } from "./collector"
+import type { MetricsEventApi } from "./event-bus"
 import { getConfig } from "./config"
 import { log } from "./logger"
 import { SidebarMetrics } from "./components/SidebarMetrics"
@@ -199,7 +199,21 @@ function createV1EventShim(ctx: V2Context, holder: CollectorHolder): MetricsEven
 
 // ---------------------------------------------------------------------------
 // Theme adapter: components read V1 flat tokens.
+// NOTE: the theme shape is declared locally on purpose — tui-v2 must not
+// import anything from the `@opencode-ai/*` (V1) scope, not even types: the
+// V2 host installs every `@opencode-ai/*` specifier it sees into the
+// plugin sandbox, pulling a second plugin runtime into the process.
 // ---------------------------------------------------------------------------
+
+/** Flat theme tokens the shared components read (V1 shape, structural). */
+interface V1FlatTheme {
+    readonly text?: unknown
+    readonly textMuted?: unknown
+    readonly accent?: unknown
+    readonly warning?: unknown
+    readonly success?: unknown
+    readonly [key: string]: unknown
+}
 
 function pickThemeToken(theme: V2Theme | undefined, paths: ReadonlyArray<ReadonlyArray<string>>): unknown {
     for (const path of paths) {
@@ -216,14 +230,14 @@ function pickThemeToken(theme: V2Theme | undefined, paths: ReadonlyArray<Readonl
     return undefined
 }
 
-function v1ThemeFromV2(theme: V2Theme | undefined): TuiThemeCurrent {
+function v1ThemeFromV2(theme: V2Theme | undefined): V1FlatTheme {
     return {
         text: pickThemeToken(theme, [["text", "default"]]),
         textMuted: pickThemeToken(theme, [["text", "subdued"]]),
         accent: pickThemeToken(theme, [["text", "feedback", "info", "default"], ["text", "default"]]),
         warning: pickThemeToken(theme, [["text", "feedback", "warning", "default"]]),
         success: pickThemeToken(theme, [["text", "feedback", "success", "default"]]),
-    } as TuiThemeCurrent
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +278,7 @@ export function setupTuiV2(ctx: V2Context): V2Cleanup {
                         collector={collector}
                         refreshIntervalMs={config.refreshIntervalMs}
                         barConfig={config}
-                        theme={theme}
+                        theme={theme as never}
                         controller={controller}
                         requestRender={requestRender}
                     />

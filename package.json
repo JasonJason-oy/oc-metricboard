@@ -76,18 +76,38 @@
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.4",
     "@opencode-ai/sdk": "1.18.4",
+    "@opentui/core": "^0.4.5",
+    "@opentui/solid": "^0.4.5",
+    "solid-js": "^1.9.12",
     "@types/bun": "latest",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@opentui/core": "0.4.5",
-    "@opentui/solid": "0.4.5",
-    "comment-json": "^5.0.0",
-    "solid-js": "^1.9.12"
+    "comment-json": "^5.0.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*",
-    "@opencode-ai/sdk": "*"
+    "@opencode-ai/sdk": "*",
+    "@opentui/core": "*",
+    "@opentui/solid": "*",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode-ai/sdk": {
+      "optional": true
+    },
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
   }
 }
