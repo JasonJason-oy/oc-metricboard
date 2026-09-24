@@ -245,6 +245,15 @@ function v1ThemeFromV2(theme: V2Theme | undefined): V1FlatTheme {
 // ---------------------------------------------------------------------------
 
 export function setupTuiV2(ctx: V2Context): V2Cleanup {
+    // The V2 host may invoke this module's `setup` in a server-side loading
+    // context (capability probing), where there is no TUI surface: `ctx.ui`
+    // is undefined. Bail out silently instead of throwing — the real TUI
+    // setup runs where `ctx.ui.slot` exists. (The sidebar already renders;
+    // this path is only the server-side probe.)
+    if (!ctx || !ctx.ui || typeof ctx.ui.slot !== "function") {
+        log("opencode-metrics v2 entry: no ui.slot in this context, skipping")
+        return () => {}
+    }
     const config = getConfig()
     log("opencode-metrics v2 entry initialized")
 
