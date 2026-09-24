@@ -1,7 +1,7 @@
 import { estimateTokens } from "./metrics"
 import { parseAssistantTextDelta } from "./event-shapes"
 import { currentRequest } from "./request-state"
-import { eventAggregateID, eventID, eventProperties, stringEventProperty } from "./event-bus"
+import { eventAggregateID, eventID, eventPerfTime, eventProperties, stringEventProperty } from "./event-bus"
 import type { EventHandlerContext } from "./collector-state"
 import { recordLiveTokens } from "./live-speed"
 import { ensureTurn, recordTurnFirstToken } from "./turn-state"
@@ -78,7 +78,7 @@ export function applyAssistantDelta(ctx: EventHandlerContext, event: unknown): v
     sessionAliases.add(aggregateID)
     state.sessionAliases.set(text.sessionID, sessionAliases)
   }
-  const now = performance.now()
+  const now = eventPerfTime(event, performance.now())
   actions.startSessionTiming(text.sessionID, now)
   const key = partEstimateKey(text.sessionID, text.messageID, text.partID)
   const deltaTokens = estimateTokens(text.delta, ctx.config.estimationRatio)

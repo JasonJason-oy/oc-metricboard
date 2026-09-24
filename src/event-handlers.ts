@@ -11,7 +11,7 @@ import {
 } from "./event-shapes"
 import { applyAssistantTokens, applySessionModel, hasPositiveAssistantTokens, mergeAssistantModel } from "./request-updates"
 import { completeRequest, currentRequest } from "./request-state"
-import { eventAggregateID, eventID, eventProperties, eventProperty, statusType, stringEventProperty } from "./event-bus"
+import { eventAggregateID, eventID, eventPerfTime, eventProperties, eventProperty, statusType, stringEventProperty } from "./event-bus"
 import type { EventHandlerContext } from "./collector-state"
 import { clearLiveSpeed, resetLiveSpeed } from "./live-speed"
 import { ensureTurn, retireRequestIntoTurn, startTurn } from "./turn-state"
@@ -97,7 +97,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     log(`session.status: ${sessionID} -> ${type}`)
 
     if (type === "busy") {
-      const now = performance.now()
+      const now = eventPerfTime(event, performance.now())
       actions.startSessionTiming(sessionID, now)
       actions.clearHoldTimer(sessionID)
       const existingTurn = state.turns.get(sessionID)
@@ -118,7 +118,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     }
 
     if (type === "idle") {
-      completeRequest({ state, actions, sessionID, now: performance.now(), holdDurationMs: config.holdDurationMs, log })
+      completeRequest({ state, actions, sessionID, now: eventPerfTime(event, performance.now()), holdDurationMs: config.holdDurationMs, log })
     }
   })
 
@@ -126,7 +126,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     const sessionID = stringEventProperty(event, "sessionID")
     if (sessionID.length === 0) return
     recordEventAlias(event, sessionID)
-    completeRequest({ state, actions, sessionID, now: performance.now(), holdDurationMs: config.holdDurationMs, log })
+    completeRequest({ state, actions, sessionID, now: eventPerfTime(event, performance.now()), holdDurationMs: config.holdDurationMs, log })
   })
 
   // ── message.part.delta ──
@@ -139,9 +139,9 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     if (sessionID.length === 0 || messageID.length === 0) return
     recordEventAlias(event, sessionID)
     if (field !== "text") return
-    actions.startSessionTiming(sessionID, performance.now())
+    actions.startSessionTiming(sessionID, eventPerfTime(event, performance.now()))
 
-    const now = performance.now()
+    const now = eventPerfTime(event, performance.now())
     ensureTurn(state.turns, sessionID, now)
     applyAssistantPartDelta(ctx, sessionID, messageID, partID, delta, now)
   })
@@ -150,7 +150,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     const step = parseAssistantStepStarted(eventProperties(event), eventID(event))
     if (!step) return
     recordEventAlias(event, step.sessionID)
-    const now = performance.now()
+    const now = eventPerfTime(event, performance.now())
     actions.startSessionTiming(step.sessionID, now)
     const existingTurn = state.turns.get(step.sessionID)
     if (!existingTurn || existingTurn.isComplete) startTurn(state.turns, step.sessionID, now)
@@ -175,7 +175,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     const step = parseAssistantStepEnded(eventProperties(event), fallbackMessageID)
     if (!step) return
     recordEventAlias(event, step.sessionID)
-    const now = performance.now()
+    const now = eventPerfTime(event, performance.now())
     actions.startSessionTiming(step.sessionID, now)
     const turn = ensureTurn(state.turns, step.sessionID, now)
     const existing = state.requests.get(step.sessionID)
@@ -215,7 +215,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
     recordEventAlias(event, sessionID)
     const rawPart = eventProperty(event, "part")
     const part = parseTextPart(rawPart)
-    const now = performance.now()
+    const now = eventPerfTime(event, performance.now())
     const msgIds = state.userMessageIds.get(sessionID)
     if (part && msgIds?.has(part.messageID)) {
       const current = state.requests.get(sessionID)
@@ -246,7 +246,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
       const nextModel = mergeAssistantModel(state.sessionModels.get(sessionID), assistant)
       if (nextModel) state.sessionModels.set(sessionID, nextModel)
 
-      const now = performance.now()
+      const now = eventPerfTime(event, performance.now())
       const tokens = assistant.tokens
       const existing = state.requests.get(sessionID)
       const turn = ensureTurn(state.turns, sessionID, now)
@@ -288,7 +288,7 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
       if (userMsgID && state.userMessageIds.get(sessionID)?.has(userMsgID)) {
         return
       }
-      const now = performance.now()
+      const now = eventPerfTime(event, performance.now())
       const previous = state.requests.get(sessionID)
       const previousTurn = state.turns.get(sessionID)
       if (previous && previousTurn) retireRequestIntoTurn(previousTurn, previous)

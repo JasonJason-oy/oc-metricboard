@@ -133,7 +133,14 @@ export function translateExecutionStartedToBusy(event: V2EventLike): unknown {
     const data = isRecord(event.data) ? event.data : {}
     const sessionID = str(data.sessionID)
     if (!sessionID) return null
-    return { type: "session.status", properties: { sessionID, status: { type: "busy" } } }
+    // Preserve the host stamp so downstream timing uses generation time,
+    // not the (possibly batched) delivery time.
+    const created = typeof event.created === "number" ? event.created : undefined
+    return {
+        type: "session.status",
+        ...(created !== undefined ? { created } : {}),
+        properties: { sessionID, status: { type: "busy" } },
+    }
 }
 
 /**
@@ -145,7 +152,12 @@ export function translateExecutionSettledToIdle(event: V2EventLike): unknown {
     const data = isRecord(event.data) ? event.data : {}
     const sessionID = str(data.sessionID)
     if (!sessionID) return null
-    return { type: "session.idle", properties: { sessionID } }
+    const created = typeof event.created === "number" ? event.created : undefined
+    return {
+        type: "session.idle",
+        ...(created !== undefined ? { created } : {}),
+        properties: { sessionID },
+    }
 }
 
 function eventSessionID(event: unknown): string {
