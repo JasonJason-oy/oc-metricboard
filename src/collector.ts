@@ -418,7 +418,12 @@ export function createCollector(
         const latest = metrics.reduce((a, b) => (b.requestStartTime >= a.requestStartTime ? b : a))
         const frTokens = getDisplayOutputTokens(latest)
         const genStart = latest.firstTokenTime ?? latest.requestStartTime
-        const genEnd = isComplete && completeTime !== null ? completeTime : now
+        // Same freeze rule as the main aggregate: an open-but-silent group
+        // ends its window at the latest request's last activity, not `now`.
+        const latestLastActivity = latest.lastDeltaTime ?? null
+        const genEnd = isComplete && completeTime !== null
+          ? completeTime
+          : latest.isStreaming || latestLastActivity === null ? now : latestLastActivity
         const saneStart = genStart !== null && Number.isFinite(genStart) && genStart >= 0 && genStart <= now
         const saneEnd = genEnd !== null && Number.isFinite(genEnd) && genEnd >= 0 && genEnd <= now + 60_000
         if (frTokens > 0 && saneStart && saneEnd && genEnd > genStart) {
@@ -564,7 +569,15 @@ export function createCollector(
         // the foreground window would inflate TPS absurdly (1800+ t/s).
         const frTokens = getDisplayOutputTokens(foregroundRequest)
         const genStart = firstTokenTime ?? requestStartTime
-        const genEnd = isComplete ? completeTime : now
+        // Window end: complete → frozen completeTime; streaming → now;
+        // open but silent (e.g. a lost completion event) → last observed
+        // activity, so the reading freezes instead of decaying in real time
+        // while idle.
+        const foregroundActive = foregroundRequest?.isStreaming ?? false
+        const foregroundLastActivity = foregroundRequest?.lastDeltaTime ?? null
+        const genEnd = isComplete
+          ? completeTime
+          : foregroundActive || foregroundLastActivity === null ? now : foregroundLastActivity
         const saneStart = genStart !== null && Number.isFinite(genStart) && genStart >= 0 && genStart <= now
         const saneEnd = genEnd !== null && Number.isFinite(genEnd) && genEnd >= 0 && genEnd <= now + 60_000
         if (frTokens > 0 && saneStart && saneEnd && genEnd > genStart) {

@@ -127,13 +127,25 @@ function str(value: unknown): string {
 /**
  * `session.execution.started` = "the user's prompt was admitted and work
  * started" — the V2 equivalent of V1's `session.status -> busy`, which drives
- * turn start and session timing.
+ * turn start and session timing. Exported for tests.
  */
-function translateExecutionStarted(event: V2EventLike): unknown {
+export function translateExecutionStartedToBusy(event: V2EventLike): unknown {
     const data = isRecord(event.data) ? event.data : {}
     const sessionID = str(data.sessionID)
     if (!sessionID) return null
     return { type: "session.status", properties: { sessionID, status: { type: "busy" } } }
+}
+
+/**
+ * Turn-settled execution maps to the V1 `session.idle` shape that drives
+ * request completion. Used as a fallback next to the native V2
+ * `session.idle`, which some flows never emit. Exported for tests.
+ */
+export function translateExecutionSettledToIdle(event: V2EventLike): unknown {
+    const data = isRecord(event.data) ? event.data : {}
+    const sessionID = str(data.sessionID)
+    if (!sessionID) return null
+    return { type: "session.idle", properties: { sessionID } }
 }
 
 function eventSessionID(event: unknown): string {
@@ -164,34 +176,73 @@ function createV1EventShim(ctx: V2Context, holder: CollectorHolder): MetricsEven
         }
     }
 
+    const subscribeV2 = (
+        v2Type: string,
+        subscribee: (event: unknown) => void,
+    ): (() => void) => {
+        try {
+            const unsub = ctx.data.on(v2Type, (event: unknown) => {
+                try {
+                    subscribee(event)
+                } catch (error) {
+                    // One malformed event must never tear down the handler chain.
+                    log(`v2 event dispatch failed: ${String(error)}`)
+                }
+            })
+            return typeof unsub === "function" ? unsub : () => {}
+        } catch (error) {
+            log(`v2 event subscribe failed (${v2Type}): ${String(error)}`)
+            return () => {}
+        }
+    }
+
     return {
         event: {
             on(type: string, handler: (event: unknown) => void): () => void {
                 // V1 hosts subscribe `.1`/`.2` delivery variants; V2 has none.
                 if (/\.1$|\.2$/.test(type)) return () => {}
+                // V1 session lifecycle has no same-name V2 event: synthesize
+                // busy from execution.started. (Without this, turns, session
+                // timing, and completion never start on V2.)
+                if (type === "session.status") {
+                    return subscribeV2("session.execution.started", (event) => {
+                        const translated = translateExecutionStartedToBusy(event as V2EventLike)
+                        if (translated !== null) handler(translated)
+                    })
+                }
+                // Completion: native V2 session.idle where emitted, plus the
+                // execution-settled events as fallback — some flows never emit
+                // session.idle, which used to leave the turn/request/timing
+                // open forever (TPS decaying in real time while idle).
+                // completeRequest is idempotent, so a doubled signal is safe.
+                if (type === "session.idle") {
+                    const unsubs: Array<() => void> = [
+                        subscribeV2("session.idle", handler),
+                    ]
+                    for (const settled of [
+                        "session.execution.succeeded",
+                        "session.execution.failed",
+                        "session.execution.interrupted",
+                    ] as const) {
+                        unsubs.push(subscribeV2(settled, (event) => {
+                            const translated = translateExecutionSettledToIdle(event as V2EventLike)
+                            if (translated !== null) handler(translated)
+                        }))
+                    }
+                    return () => {
+                        for (const unsub of unsubs) {
+                            try {
+                                unsub()
+                            } catch { /* ignore */ }
+                        }
+                    }
+                }
                 const v2Type = V2_EVENT_MAP[type]
                 if (!v2Type) return () => {}
-                let unsub: (() => void) | undefined
-                try {
-                    unsub = ctx.data.on(v2Type, (event: unknown) => {
-                        try {
-                            if (v2Type === "session.execution.started") {
-                                const translated = translateExecutionStarted(event as V2EventLike)
-                                if (translated !== null) handler(translated)
-                                return
-                            }
-                            syncFamily(eventSessionID(event))
-                            handler(event)
-                        } catch (error) {
-                            // One malformed event must never tear down the handler chain.
-                            log(`v2 event dispatch failed: ${String(error)}`)
-                        }
-                    })
-                } catch (error) {
-                    log(`v2 event subscribe failed (${type}): ${String(error)}`)
-                    return () => {}
-                }
-                return typeof unsub === "function" ? unsub : () => {}
+                return subscribeV2(v2Type, (event) => {
+                    syncFamily(eventSessionID(event))
+                    handler(event)
+                })
             },
         },
     }
