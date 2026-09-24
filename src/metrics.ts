@@ -128,6 +128,22 @@ export function getTtft(m: RequestMetrics): number | null {
 }
 
 /**
+ * Upper bound for a believable token rate. Mirrors the live-TPS sanity gate:
+ * per-delta times may be delivery-stamped (batched flushes), collapsing the
+ * generation window to milliseconds and inflating the quotient absurdly
+ * (e.g. 61 tokens / 42ms = 1450 t/s — physically impossible decoding).
+ * Windows implying a faster rate fall back to turn-anchored timing.
+ */
+export const MAX_CREDIBLE_TPS = 300
+
+export function credibleTps(tokens: number, windowMs: number): number | null {
+  if (!(tokens > 0) || !(windowMs > 0)) return null
+  const tps = Math.round((tokens / (windowMs / 1000)) * 10) / 10
+  if (!Number.isFinite(tps) || tps < 0 || tps > MAX_CREDIBLE_TPS) return null
+  return tps
+}
+
+/**
  * Calculate average token speed (tokens/second).
  * Based on cumulative streaming time (now - firstTokenTime).
  */

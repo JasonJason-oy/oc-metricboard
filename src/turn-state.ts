@@ -14,6 +14,7 @@ export function createTurnMetrics(sessionID: string, now: number): TurnMetrics {
     hasStickyContextTokens: false,
     stickyCacheReadTokens: 0,
     hasStickyCacheReadTokens: false,
+    toolIntervals: [],
     isComplete: false,
   }
 }
@@ -93,6 +94,75 @@ export function completeTurn(turn: TurnMetrics, now: number): void {
  */
 export function recordTurnFirstToken(turn: TurnMetrics, now: number): void {
   if (turn.firstTokenTime === null) turn.firstTokenTime = now
+}
+
+/**
+ * Record a tool execution span on the session's turn. Tools in one turn may
+ * overlap (parallel calls), so every span is kept and the union is computed
+ * at query time — a plain sum would double-count overlaps.
+ */
+export function recordToolCalled(
+  turns: Map<string, TurnMetrics>,
+  sessionID: string,
+  toolID: string,
+  now: number,
+): void {
+  const turn = ensureTurn(turns, sessionID, now)
+  turn.toolIntervals.push({ id: toolID, start: now, end: null })
+}
+
+export function recordToolSettled(
+  turns: Map<string, TurnMetrics>,
+  sessionID: string,
+  toolID: string,
+  now: number,
+): void {
+  const turn = turns.get(sessionID)
+  if (!turn) return
+  if (toolID) {
+    const open = turn.toolIntervals.find((interval) => interval.id === toolID && interval.end === null)
+    if (open) {
+      open.end = Math.max(now, open.start)
+      return
+    }
+  }
+  // Unknown id (or unsettled shape): close the most recent open span so a
+  // lost settle event cannot leak an infinite interval.
+  for (let i = turn.toolIntervals.length - 1; i >= 0; i--) {
+    if (turn.toolIntervals[i]!.end === null) {
+      turn.toolIntervals[i]!.end = Math.max(now, turn.toolIntervals[i]!.start)
+      return
+    }
+  }
+}
+
+/**
+ * Milliseconds of tool execution overlapping [from, to], unioned so parallel
+ * tool calls count once. Open spans are clamped at `to`.
+ */
+export function toolOverlapMs(turn: TurnMetrics | undefined, from: number, to: number): number {
+  if (!turn || to <= from) return 0
+  const spans: Array<{ start: number; end: number }> = []
+  for (const interval of turn.toolIntervals) {
+    const start = Math.max(interval.start, from)
+    const end = Math.min(interval.end ?? to, to)
+    if (end > start) spans.push({ start, end })
+  }
+  spans.sort((a, b) => a.start - b.start)
+  let total = 0
+  let cursor: number | null = null
+  let cursorEnd = 0
+  for (const span of spans) {
+    if (cursor === null || span.start > cursorEnd) {
+      if (cursor !== null) total += cursorEnd - cursor
+      cursor = span.start
+      cursorEnd = span.end
+    } else if (span.end > cursorEnd) {
+      cursorEnd = span.end
+    }
+  }
+  if (cursor !== null) total += cursorEnd - cursor
+  return total
 }
 
 /**

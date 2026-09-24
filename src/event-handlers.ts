@@ -14,7 +14,7 @@ import { completeRequest, currentRequest } from "./request-state"
 import { eventAggregateID, eventID, eventPerfTime, eventProperties, eventProperty, statusType, stringEventProperty } from "./event-bus"
 import type { EventHandlerContext } from "./collector-state"
 import { clearLiveSpeed, resetLiveSpeed } from "./live-speed"
-import { ensureTurn, retireRequestIntoTurn, startTurn } from "./turn-state"
+import { ensureTurn, recordToolCalled, recordToolSettled, retireRequestIntoTurn, startTurn } from "./turn-state"
 
 export function registerEventHandlers(ctx: EventHandlerContext): Array<() => void> {
   const { api, config, log, state, actions } = ctx
@@ -168,6 +168,33 @@ export function registerEventHandlers(ctx: EventHandlerContext): Array<() => voi
   on("session.next.text.delta", (event) => applyAssistantDelta(ctx, event))
 
   on("session.next.reasoning.delta", (event) => applyAssistantDelta(ctx, event))
+
+  // ── tool execution spans (V2 tool.* events; V1 has none) ──
+  // Feeds per-turn tool intervals so frozen TPS can subtract tool time from
+  // the turn-anchored window. Unknown shapes are ignored defensively.
+  on("session.tool.called", (event) => {
+    const sessionID = stringEventProperty(event, "sessionID")
+    if (sessionID.length === 0) return
+    recordEventAlias(event, sessionID)
+    recordToolCalled(state.turns, sessionID, stringEventProperty(event, "id"), eventPerfTime(event, performance.now()))
+    actions.notify()
+  })
+
+  on("session.tool.success", (event) => {
+    const sessionID = stringEventProperty(event, "sessionID")
+    if (sessionID.length === 0) return
+    recordEventAlias(event, sessionID)
+    recordToolSettled(state.turns, sessionID, stringEventProperty(event, "id"), eventPerfTime(event, performance.now()))
+    actions.notify()
+  })
+
+  on("session.tool.failed", (event) => {
+    const sessionID = stringEventProperty(event, "sessionID")
+    if (sessionID.length === 0) return
+    recordEventAlias(event, sessionID)
+    recordToolSettled(state.turns, sessionID, stringEventProperty(event, "id"), eventPerfTime(event, performance.now()))
+    actions.notify()
+  })
 
   on("session.next.step.ended", (event) => {
     const sessionID = stringEventProperty(event, "sessionID")

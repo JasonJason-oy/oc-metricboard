@@ -34,6 +34,12 @@ export interface FinalizedStepUsage {
   exact: boolean
 }
 
+export interface ToolInterval {
+  readonly id: string
+  readonly start: number
+  end: number | null                   // null = still running
+}
+
 export interface TurnMetrics {
   sessionID: string
   turnStartTime: number
@@ -46,6 +52,7 @@ export interface TurnMetrics {
   hasStickyContextTokens: boolean
   stickyCacheReadTokens: number
   hasStickyCacheReadTokens: boolean
+  toolIntervals: ToolInterval[]         // Tool execution spans (V2 tool.* events; empty on V1)
   isComplete: boolean
 }
 

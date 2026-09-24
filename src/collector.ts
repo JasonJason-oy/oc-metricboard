@@ -1,6 +1,6 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BarConfig, CacheReadCompleteness, MetricsAggregate, MetricsScope, ModelMetrics, RequestMetrics } from "./types"
-import { getDisplayInputTokens, getDisplayOutputTokens, getTtft } from "./metrics"
+import { credibleTps, getDisplayInputTokens, getDisplayOutputTokens, getTtft, MAX_CREDIBLE_TPS } from "./metrics"
 import { registerEventHandlers } from "./event-handlers"
 import type { CollectorState } from "./collector-state"
 import type { MetricsEventApi } from "./event-bus"
@@ -8,7 +8,7 @@ import { hydrateSession, isHydrationApi, callWithFallback, type HydrationApi } f
 import { createSessionTree } from "./session-tree"
 import { getScopeElapsedMs, getSessionElapsedMs, startSessionTiming, stopSessionTiming } from "./session-timing"
 import { clearLiveSpeed, getLiveTps } from "./live-speed"
-import { getTurnTtft, liveRequestOutput, turnInputTokens } from "./turn-state"
+import { getTurnTtft, liveRequestOutput, toolOverlapMs, turnInputTokens } from "./turn-state"
 
 export type MetricsListener = () => void
 type MetricsHydrationApi = MetricsEventApi & HydrationApi
@@ -426,8 +426,20 @@ export function createCollector(
           : latest.isStreaming || latestLastActivity === null ? now : latestLastActivity
         const saneStart = genStart !== null && Number.isFinite(genStart) && genStart >= 0 && genStart <= now
         const saneEnd = genEnd !== null && Number.isFinite(genEnd) && genEnd >= 0 && genEnd <= now + 60_000
+        let primary: number | null = null
         if (frTokens > 0 && saneStart && saneEnd && genEnd > genStart) {
-          displayTps = Math.round((frTokens / ((genEnd - genStart) / 1000)) * 10) / 10
+          primary = Math.round((frTokens / ((genEnd - genStart) / 1000)) * 10) / 10
+        }
+        // Same turn-anchored fallback as the main aggregate, using the latest
+        // request's own turn.
+        const latestTurn = state.turns.get(latest.sessionID)
+        if ((primary === null || primary > MAX_CREDIBLE_TPS) && latestTurn && frTokens > 0) {
+          const turnEnd = completeTime ?? latestLastActivity ?? now
+          const turnWindow = turnEnd - latestTurn.turnStartTime
+            - toolOverlapMs(latestTurn, latestTurn.turnStartTime, turnEnd)
+          displayTps = credibleTps(frTokens, turnWindow) ?? primary
+        } else {
+          displayTps = primary
         }
       }
 
@@ -580,8 +592,21 @@ export function createCollector(
           : foregroundActive || foregroundLastActivity === null ? now : foregroundLastActivity
         const saneStart = genStart !== null && Number.isFinite(genStart) && genStart >= 0 && genStart <= now
         const saneEnd = genEnd !== null && Number.isFinite(genEnd) && genEnd >= 0 && genEnd <= now + 60_000
+        let primary: number | null = null
         if (frTokens > 0 && saneStart && saneEnd && genEnd > genStart) {
-          displayTps = Math.round((frTokens / ((genEnd - genStart) / 1000)) * 10) / 10
+          primary = Math.round((frTokens / ((genEnd - genStart) / 1000)) * 10) / 10
+        }
+        // Fall back to the turn-anchored window when the per-step window
+        // implies a physically incredible rate: per-delta times may be
+        // delivery-stamped (batched flushes), while turn admission, step
+        // boundaries, and tool spans use discrete truthful anchors.
+        if ((primary === null || primary > MAX_CREDIBLE_TPS) && foregroundTurn && frTokens > 0) {
+          const turnEnd = completeTime ?? foregroundLastActivity ?? now
+          const turnWindow = turnEnd - foregroundTurn.turnStartTime
+            - toolOverlapMs(foregroundTurn, foregroundTurn.turnStartTime, turnEnd)
+          displayTps = credibleTps(frTokens, turnWindow) ?? primary
+        } else {
+          displayTps = primary
         }
       }
 

@@ -114,6 +114,9 @@ const V2_EVENT_MAP: Readonly<Record<string, string | null>> = {
     "session.next.reasoning.delta": "session.reasoning.delta",
     "session.next.step.started": "session.step.started",
     "session.next.step.ended": "session.step.ended",
+    "session.tool.called": "session.tool.called",
+    "session.tool.success": "session.tool.success",
+    "session.tool.failed": "session.tool.failed",
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
