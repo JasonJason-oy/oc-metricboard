@@ -35,6 +35,9 @@
     },
     "./tui": {
       "import": "./dist/tui.js"
+    },
+    "./server": {
+      "import": "./dist/server.js"
     }
   },
   "oc-plugin": [
@@ -44,6 +47,7 @@
     "dist",
     "src/tui.tsx",
     "src/tui-v2.tsx",
+    "src/server.ts",
     "src/tui-preferences.ts",
     "src/tui-prefs-io.ts",
     "src/badge-contrast.ts",
@@ -72,7 +76,7 @@
   ],
   "scripts": {
     "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "esbuild src/tui.tsx --bundle --format=esm --platform=node --target=es2022 --outfile=dist/tui.js --external:@opentui/solid --external:solid-js --external:comment-json",
+    "build": "esbuild src/tui.tsx src/server.ts --bundle --format=esm --platform=node --target=es2022 --outdir=dist --external:@opentui/solid --external:solid-js --external:comment-json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "init:prefs": "OPENCODE_TUI_PREFERENCES_FILE=${OPENCODE_TUI_PREFERENCES_FILE:-$HOME/.config/opencode/tui-preferences.jsonc} bun run src/scripts/init-tui-preferences.ts",
