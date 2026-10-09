@@ -87,10 +87,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "comment-json": "^5.0.0"
-  },
-  "optionalDependencies": {
     "@opentui/solid": "0.5.17",
+    "comment-json": "^5.0.0",
     "solid-js": "1.9.12"
   },
   "peerDependencies": {
