@@ -38,8 +38,7 @@
  * - message.updated passthrough (user-message turn anchor) — turn start is
  *   covered by session.execution.started / step.started
  */
-/** @jsxImportSource @opentui/solid */
-/** @jsxRuntime automatic */
+import { createElement } from "@opentui/solid"
 import { createCollector, type MetricsCollector } from "./collector"
 import type { MetricsEventApi } from "./event-bus"
 import { getConfig } from "./config"
@@ -346,18 +345,20 @@ export function setupTuiV2(ctx: V2Context): V2Cleanup {
             append: "sidebar.content",
             render: (input) => {
                 const sessionID = input?.sessionID ?? ""
-                if (!sessionID) return <box />
-                return (
-                    <SidebarMetrics
-                        sessionID={sessionID}
-                        collector={collector}
-                        refreshIntervalMs={config.refreshIntervalMs}
-                        barConfig={config}
-                        theme={theme as never}
-                        controller={controller}
-                        requestRender={requestRender}
-                    />
-                )
+                if (!sessionID) return createElement("box")
+                const sidebar = SidebarMetrics({
+                    sessionID,
+                    collector,
+                    refreshIntervalMs: config.refreshIntervalMs,
+                    barConfig: config,
+                    theme: theme as never,
+                    controller,
+                    requestRender,
+                })
+                // Component-owned timers/subscriptions are torn down from the
+                // setup cleanup path (the disposers array returned below).
+                disposers.push(sidebar.dispose)
+                return sidebar.node
             },
         })
     )

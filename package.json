@@ -66,6 +66,7 @@
     "src/event-shapes.ts",
     "src/components/SidebarMetrics.tsx",
     "src/components/StatRow.tsx",
+    "src/components/ui-element.ts",
     "src/scripts/init-tui-preferences.ts",
     "README.md"
   ],
@@ -87,6 +88,10 @@
   },
   "dependencies": {
     "comment-json": "^5.0.0"
+  },
+  "optionalDependencies": {
+    "@opentui/solid": "0.5.17",
+    "solid-js": "1.9.12"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*",

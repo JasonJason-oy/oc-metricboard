@@ -1,5 +1,3 @@
-/** @jsxImportSource @opentui/solid */
-/** @jsxRuntime automatic */
 import type { TuiPlugin, TuiPluginApi, TuiPluginMeta } from "@opencode-ai/plugin/tui"
 import type { PluginOptions } from "@opencode-ai/plugin"
 import { createCollector } from "./collector"
@@ -27,26 +25,36 @@ const plugin: TuiPlugin = async (api: TuiPluginApi, _options: PluginOptions | un
     const prefs = resolveMetricsPrefs(seedRoot)
     const controller = createMetricsSidebarController(prefs, () => api.renderer.requestRender())
 
+    // Explicit teardown for component-owned timers/subscriptions (replaces
+    // the components' old onCleanup, which is not reliable on the V2 Node
+    // loader path). Drained from the plugin dispose hook below.
+    const sidebarDisposers: Array<() => void> = []
+
     api.slots.register({
         order: effectiveOrder,
         slots: {
             sidebar_content(ctx, props) {
-                return (
-                    <SidebarMetrics
-                        sessionID={props.session_id}
-                        collector={collector}
-                        refreshIntervalMs={config.refreshIntervalMs}
-                        barConfig={config}
-                        theme={ctx.theme.current}
-                        controller={controller}
-                        requestRender={() => api.renderer.requestRender()}
-                    />
-                )
+                const sidebar = SidebarMetrics({
+                    sessionID: props.session_id,
+                    collector,
+                    refreshIntervalMs: config.refreshIntervalMs,
+                    barConfig: config,
+                    theme: ctx.theme.current,
+                    controller: controller,
+                    requestRender: () => api.renderer.requestRender(),
+                })
+                sidebarDisposers.push(sidebar.dispose)
+                return sidebar.node
             },
         },
     })
 
     api.lifecycle.onDispose(() => {
+        for (const dispose of sidebarDisposers.splice(0)) {
+            try {
+                dispose()
+            } catch { /* ignore */ }
+        }
         collector.dispose()
     })
 

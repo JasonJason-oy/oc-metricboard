@@ -1,6 +1,4 @@
-/** @jsxImportSource @opentui/solid */
-/** @jsxRuntime automatic */
-import { createMemo, createSignal, onCleanup } from "solid-js"
+import { createMemo, createSignal, type JSX } from "solid-js"
 import type { BoxRenderable, TextRenderable } from "@opentui/core"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { BarConfig, MetricsAggregate, ModelMetrics } from "../types"
@@ -12,10 +10,11 @@ import {
     formatCacheRead,
 } from "../metrics"
 import { StatRow } from "./StatRow"
+import { element } from "./ui-element"
 import type { MetricsSidebarController } from "../tui-preferences"
 
 // Upper bound on model-breakdown rows rendered in the sidebar. This runtime's
-// JSX tree is not reactive, so rows are pre-rendered once and toggled via
+// tree is not reactive, so rows are pre-rendered once and toggled via
 // registerSync; more sub-agents than this simply scroll off.
 const MAX_MODEL_ROWS = 8
 
@@ -29,7 +28,14 @@ interface SidebarMetricsProps {
     requestRender?: () => void
 }
 
-export function SidebarMetrics(props: SidebarMetricsProps) {
+export interface SidebarMetricsInstance {
+    /** Root renderable for the host slot. Treated as the host's `JSX.Element` (same lie the old jsx-runtime types told). */
+    node: JSX.Element
+    /** Clears timers/subscriptions/syncs. Call from the plugin setup cleanup path. */
+    dispose: () => void
+}
+
+export function SidebarMetrics(props: SidebarMetricsProps): SidebarMetricsInstance {
     let disposed = false
     let refreshQueued = false
     let interval: ReturnType<typeof setInterval> | undefined
@@ -60,14 +66,19 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
         })
     }
 
-    onCleanup(() => {
+    // Explicit disposal replacing the old onCleanup: the V2 Node loader builds
+    // this tree outside a dispose-owned JSX scope, so onCleanup was wired to a
+    // scope we do not control. The setup cleanup path (tui.tsx onDispose /
+    // tui-v2.tsx setup return) calls this instead.
+    const dispose = () => {
+        if (disposed) return
         disposed = true
         refreshQueued = false
         rowSyncs.clear()
         if (interval !== undefined) clearInterval(interval)
         unsub()
         unsubController()
-    })
+    }
 
     interval = setInterval(bump, props.refreshIntervalMs)
     unsub = props.collector.subscribe(bump)
@@ -93,9 +104,9 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
         return props.controller.collapsed()
     })
     const headerLabel = () => props.controller.prefs().section.label
-    // This runtime's JSX is non-reactive: the header <text> renders once at
-    // mount, so the ▶/▼ arrow would freeze on its initial value. Two static
-    // bold nodes (collapsed/expanded) are pre-rendered and toggled
+    // This runtime's tree is non-reactive: the header <text> nodes are built
+    // once at mount, so the ▶/▼ arrow would freeze on its initial value. Two
+    // static bold nodes (collapsed/expanded) are pre-rendered and toggled
     // imperatively through registerSync — the same mechanism as the rows.
     // Hidden node must be zero-sized in BOTH axes: visible=false only
     // suppresses painting, while yoga still reserves its box, which would
@@ -123,8 +134,9 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
             } catch { /* cosmetic — ignore layout failures */ }
         }
     }
-    const unregisterHeaderSync = registerRowSync(syncHeader)
-    onCleanup(() => unregisterHeaderSync())
+    // Unregistered wholesale by dispose() via rowSyncs.clear() (the old
+    // per-sync onCleanup unregister went with the JSX scope).
+    registerRowSync(syncHeader)
     const attachCollapsedHeaderNode = (node: TextRenderable) => {
         collapsedHeaderNode = node
         syncHeader()
@@ -174,206 +186,211 @@ export function SidebarMetrics(props: SidebarMetricsProps) {
         return formatElapsed(props.collector.getSessionElapsedMs(props.sessionID, currentScope(), performance.now()))
     }
 
-    return (
-        <box
-            width="100%"
-            flexDirection="column"
-            height={sectionEnabled() ? "auto" : 0}
-        >
-            <box
-                width="100%"
-                flexDirection="row"
-                alignItems="center"
-                ref={attachBoxToggle}
-            >
-                <text
-                    ref={attachCollapsedHeaderNode}
-                    fg={props.theme.text}
-                    visible={false}
-                >
-                    <b>▶ {headerLabel()}</b>
-                </text>
-                <text
-                    ref={attachExpandedHeaderNode}
-                    fg={props.theme.text}
-                >
-                    <b>▼ {headerLabel()}</b>
-                </text>
-            </box>
+    // --- tree (same hierarchy/spacing/order as the old JSX) ------------------
+    const headerBox = element("box", {
+        width: "100%",
+        flexDirection: "row",
+        alignItems: "center",
+        ref: attachBoxToggle,
+    }, [
+        element("text", {
+            ref: attachCollapsedHeaderNode,
+            fg: props.theme.text,
+            visible: false,
+        }, [
+            element("b", {}, ["▶ ", headerLabel()]),
+        ]),
+        element("text", {
+            ref: attachExpandedHeaderNode,
+            fg: props.theme.text,
+        }, [
+            element("b", {}, ["▼ ", headerLabel()]),
+        ]),
+    ])
 
-            <box width="100%" flexDirection="column">
-                <StatRow
-                    theme={props.theme}
-                    label="Status"
-                    value="No active request"
-                    dim
-                    icon="○"
-                    visible={expandedIdle}
-                    registerSync={registerRowSync}
-                />
-                {rowVisible("speed") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="TPS"
-                        value={speedValue}
-                        accent
-                        icon="⚡"
-                        registerSync={registerRowSync}
-                        visible={expandedActive}
-                    />
-                )}
-                {rowVisible("elapsed") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="Elapsed"
-                        value={elapsedValue}
-                        icon="▹"
-                        registerSync={registerRowSync}
-                        visible={expandedActive}
-                    />
-                )}
-                {rowVisible("ttft") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="TTFT"
-                        value={ttftValue}
-                        icon="⏱"
-                        registerSync={registerRowSync}
-                        visible={expandedActive}
-                    />
-                )}
-                {(rowVisible("input") || rowVisible("output")) && (
-                    <StatRow
-                        theme={props.theme}
-                        label="Tokens"
-                        value={tokenValue}
-                        registerSync={registerRowSync}
-                        visible={expandedActive}
-                    />
-                )}
-                {rowVisible("cache") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="Cache"
-                        value={cacheValue}
-                        dim
-                        icon="○"
-                        registerSync={registerRowSync}
-                        visible={expandedActive}
-                    />
-                )}
-                {rowVisible("session") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="Session"
-                        value={sessionValue}
-                        icon="◷"
-                        registerSync={registerRowSync}
-                        visible={expandedActive}
-                    />
-                )}
+    const rows: unknown[] = []
+    rows.push(StatRow({
+        theme: props.theme,
+        label: "Status",
+        value: "No active request",
+        dim: true,
+        icon: "○",
+        visible: expandedIdle,
+        registerSync: registerRowSync,
+    }))
+    if (rowVisible("speed")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "TPS",
+            value: speedValue,
+            accent: true,
+            icon: "⚡",
+            registerSync: registerRowSync,
+            visible: expandedActive,
+        }))
+    }
+    if (rowVisible("elapsed")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "Elapsed",
+            value: elapsedValue,
+            icon: "▹",
+            registerSync: registerRowSync,
+            visible: expandedActive,
+        }))
+    }
+    if (rowVisible("ttft")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "TTFT",
+            value: ttftValue,
+            icon: "⏱",
+            registerSync: registerRowSync,
+            visible: expandedActive,
+        }))
+    }
+    if (rowVisible("input") || rowVisible("output")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "Tokens",
+            value: tokenValue,
+            registerSync: registerRowSync,
+            visible: expandedActive,
+        }))
+    }
+    if (rowVisible("cache")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "Cache",
+            value: cacheValue,
+            dim: true,
+            icon: "○",
+            registerSync: registerRowSync,
+            visible: expandedActive,
+        }))
+    }
+    if (rowVisible("session")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "Session",
+            value: sessionValue,
+            icon: "◷",
+            registerSync: registerRowSync,
+            visible: expandedActive,
+        }))
+    }
 
-                {/* NEW: Model breakdown rows for tree scope.
-                    NOTE: this runtime's JSX tree is NOT reactive — the tree
-                    renders once at mount. Inline .map() evaluates once, so rows
-                    for sub-agents spawned later never appear. Fix: pre-render a
-                    fixed number of rows that pull their data live from
-                    currentAggregate() on every registerSync tick, exactly like
-                    the static Speed/TTFT rows. */}
-                {rowVisible("modelBreakdown") && (
-                    <>
-                        {Array.from({ length: MAX_MODEL_ROWS }, (_, i) => {
-                            // Line 1: short model name + ×N session count.
-                            const modelLabel = () => {
-                                const m = currentAggregate()?.modelBreakdown[i]
-                                if (!m) return ""
-                                const count = m.sessionCount > 1 ? ` ×${m.sessionCount}` : ""
-                                return `${m.modelID}${count}`
-                            }
-                            // Line 2: metrics for that model group. Compact
-                            // format (no spaces after icons, no unit suffixes,
-                            // single-space separators) so the data line fits the
-                            // narrow sidebar on ONE line without right-edge
-                            // truncation.
-                            const modelValue = () => {
-                                const m = currentAggregate()?.modelBreakdown[i]
-                                if (!m) return ""
-                                const parts: string[] = []
-                                if (rowVisible("speed")) parts.push(`⚡${m.liveTps !== null ? m.liveTps.toFixed(1) : "—"}`)
-                                if (rowVisible("ttft")) parts.push(`⏱${m.ttft !== null ? " " + formatDuration(m.ttft) : " --"}`)
-                                if (rowVisible("input")) parts.push(`↓${formatTokens(m.inputTokens)}`)
-                                if (rowVisible("output")) parts.push(`↑${formatTokens(m.outputTokens)}`)
-                                return parts.join(" ")
-                            }
-                            const visible = () => expandedActive() && (currentAggregate()?.modelBreakdown.length ?? 0) > i
-                            // The wrapper box reserves marginTop even when its
-                            // children collapse to height 0, leaving blank rows
-                            // while collapsed. Collapse height AND margins here.
-                            let wrapperNode: BoxRenderable | undefined
-                            const syncWrapper = () => {
-                                if (disposed) return
-                                if (!wrapperNode || wrapperNode.isDestroyed) return
-                                const v = visible()
-                                try {
-                                    wrapperNode.height = v ? "auto" : 0
-                                    wrapperNode.marginTop = v ? 1 : 0
-                                    wrapperNode.marginLeft = v ? 1 : 0
-                                } catch { /* ignore */ }
-                            }
-                            const attachWrapper = (node: BoxRenderable) => {
-                                wrapperNode = node
-                                syncWrapper()
-                            }
-                            const unregisterWrapperSync = registerRowSync(syncWrapper)
-                            onCleanup(() => {
-                                unregisterWrapperSync()
-                            })
-                            return (
-                                <box ref={attachWrapper} width="100%" flexDirection="column" marginLeft={1} marginTop={1}>
-                                    <StatRow
-                                        theme={props.theme}
-                                        label={modelLabel}
-                                        value={() => ""}
-                                        dim
-                                        registerSync={registerRowSync}
-                                        visible={visible}
-                                    />
-                                    <StatRow
-                                        theme={props.theme}
-                                        label={() => ""}
-                                        value={modelValue}
-                                        dim
-                                        registerSync={registerRowSync}
-                                        visible={visible}
-                                    />
-                                </box>
-                            )
-                        })}
-                    </>
-                )}
+    // Model breakdown rows for tree scope. This runtime's tree is NOT
+    // reactive — it is built once at mount, so inline .map() evaluates once:
+    // rows for sub-agents spawned later would never appear. Fix: pre-render a
+    // fixed number of rows that pull their data live from currentAggregate()
+    // on every registerSync tick, exactly like the static Speed/TTFT rows.
+    if (rowVisible("modelBreakdown")) {
+        for (let i = 0; i < MAX_MODEL_ROWS; i++) {
+            // Line 1: short model name + ×N session count.
+            const modelLabel = () => {
+                const m = currentAggregate()?.modelBreakdown[i]
+                if (!m) return ""
+                const count = m.sessionCount > 1 ? ` ×${m.sessionCount}` : ""
+                return `${m.modelID}${count}`
+            }
+            // Line 2: metrics for that model group. Compact
+            // format (no spaces after icons, no unit suffixes,
+            // single-space separators) so the data line fits the
+            // narrow sidebar on ONE line without right-edge
+            // truncation.
+            const modelValue = () => {
+                const m = currentAggregate()?.modelBreakdown[i]
+                if (!m) return ""
+                const parts: string[] = []
+                if (rowVisible("speed")) parts.push(`⚡${m.liveTps !== null ? m.liveTps.toFixed(1) : "—"}`)
+                if (rowVisible("ttft")) parts.push(`⏱${m.ttft !== null ? " " + formatDuration(m.ttft) : " --"}`)
+                if (rowVisible("input")) parts.push(`↓${formatTokens(m.inputTokens)}`)
+                if (rowVisible("output")) parts.push(`↑${formatTokens(m.outputTokens)}`)
+                return parts.join(" ")
+            }
+            const visible = () => expandedActive() && (currentAggregate()?.modelBreakdown.length ?? 0) > i
+            // The wrapper box reserves marginTop even when its
+            // children collapse to height 0, leaving blank rows
+            // while collapsed. Collapse height AND margins here.
+            let wrapperNode: BoxRenderable | undefined
+            const syncWrapper = () => {
+                if (disposed) return
+                if (!wrapperNode || wrapperNode.isDestroyed) return
+                const v = visible()
+                try {
+                    wrapperNode.height = v ? "auto" : 0
+                    wrapperNode.marginTop = v ? 1 : 0
+                    wrapperNode.marginLeft = v ? 1 : 0
+                } catch { /* ignore */ }
+            }
+            const attachWrapper = (node: BoxRenderable) => {
+                wrapperNode = node
+                syncWrapper()
+            }
+            // Wrapper syncs are unregistered wholesale by dispose() via
+            // rowSyncs.clear() (the old per-row onCleanup unregister went
+            // with the JSX scope).
+            registerRowSync(syncWrapper)
+            rows.push(element<BoxRenderable>("box", {
+                ref: attachWrapper,
+                width: "100%",
+                flexDirection: "column",
+                marginLeft: 1,
+                marginTop: 1,
+            }, [
+                StatRow({
+                    theme: props.theme,
+                    label: modelLabel,
+                    value: () => "",
+                    dim: true,
+                    registerSync: registerRowSync,
+                    visible,
+                }),
+                StatRow({
+                    theme: props.theme,
+                    label: () => "",
+                    value: modelValue,
+                    dim: true,
+                    registerSync: registerRowSync,
+                    visible,
+                }),
+            ]))
+        }
+    }
 
-                {rowVisible("speed") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="TPS"
-                        value={speedValue}
-                        accent
-                        icon="⚡"
-                        registerSync={registerRowSync}
-                        visible={collapsedActive}
-                    />
-                )}
-                {rowVisible("session") && (
-                    <StatRow
-                        theme={props.theme}
-                        label="Session"
-                        value={sessionValue}
-                        icon="◷"
-                        registerSync={registerRowSync}
-                        visible={collapsedActive}
-                    />
-                )}
-            </box>
-        </box>
-    )
+    if (rowVisible("speed")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "TPS",
+            value: speedValue,
+            accent: true,
+            icon: "⚡",
+            registerSync: registerRowSync,
+            visible: collapsedActive,
+        }))
+    }
+    if (rowVisible("session")) {
+        rows.push(StatRow({
+            theme: props.theme,
+            label: "Session",
+            value: sessionValue,
+            icon: "◷",
+            registerSync: registerRowSync,
+            visible: collapsedActive,
+        }))
+    }
+
+    const contentBox = element("box", {
+        width: "100%",
+        flexDirection: "column",
+    }, rows)
+
+    const root = element("box", {
+        width: "100%",
+        flexDirection: "column",
+        height: sectionEnabled() ? "auto" : 0,
+    }, [headerBox, contentBox])
+
+    return { node: root as unknown as JSX.Element, dispose }
 }

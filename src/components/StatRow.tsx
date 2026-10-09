@@ -1,8 +1,6 @@
-/** @jsxImportSource @opentui/solid */
-/** @jsxRuntime automatic */
-import { onCleanup } from "solid-js"
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { BoxRenderable, TextRenderable } from "@opentui/core"
+import { element } from "./ui-element"
 
 interface StatRowProps {
     theme: TuiThemeCurrent
@@ -18,11 +16,9 @@ interface StatRowProps {
 }
 
 export function StatRow(props: StatRowProps) {
-    let disposed = false
     let rowNode: BoxRenderable | undefined
     let labelNode: TextRenderable | undefined
     let valueNode: TextRenderable | undefined
-    let unregisterSync: (() => void) | undefined
     const fg = () => {
         if (props.warning) return props.theme.warning
         if (props.success) return props.theme.success ?? props.theme.accent
@@ -35,7 +31,6 @@ export function StatRow(props: StatRowProps) {
     const visible = () => typeof props.visible === "function" ? props.visible() : props.visible !== false
     const content = () => `${props.icon ? `${props.icon}  ` : ""}${value()}`
     const syncContent = () => {
-        if (disposed) return
         const isVisible = visible()
         if (rowNode && !rowNode.isDestroyed) {
             rowNode.visible = isVisible
@@ -52,7 +47,12 @@ export function StatRow(props: StatRowProps) {
         valueNode.content = isVisible ? content() : ""
         valueNode.requestRender()
     }
-    unregisterSync = props.registerSync?.(syncContent)
+    // No onCleanup here: the tree is built outside a dispose-owned JSX scope
+    // on the Node loader path. Row syncs stop when the parent
+    // SidebarMetrics.dispose() clears its rowSyncs set, and the renderables
+    // themselves are destroyed with the host slot tree (isDestroyed guards
+    // above cover the not-yet-disposed window).
+    props.registerSync?.(syncContent)
     const attachRowNode = (node: BoxRenderable) => {
         rowNode = node
         syncContent()
@@ -65,19 +65,23 @@ export function StatRow(props: StatRowProps) {
         valueNode = node
         syncContent()
     }
-    onCleanup(() => {
-        disposed = true
-        unregisterSync?.()
-        unregisterSync = undefined
-        rowNode = undefined
-        labelNode = undefined
-        valueNode = undefined
-    })
 
-    return (
-        <box ref={attachRowNode} width="100%" flexDirection="row" justifyContent="space-between" visible={visible()}>
-            <text ref={attachLabelNode} fg={props.theme.textMuted} content={visible() ? label() : ""} />
-            <text ref={attachValueNode} fg={fg()} content={content()} />
-        </box>
-    )
+    return element<BoxRenderable>("box", {
+        ref: attachRowNode,
+        width: "100%",
+        flexDirection: "row",
+        justifyContent: "space-between",
+        visible: visible(),
+    }, [
+        element<TextRenderable>("text", {
+            ref: attachLabelNode,
+            fg: props.theme.textMuted,
+            content: visible() ? label() : "",
+        }),
+        element<TextRenderable>("text", {
+            ref: attachValueNode,
+            fg: fg(),
+            content: content(),
+        }),
+    ])
 }
