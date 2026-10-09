@@ -19,3 +19,4 @@ opencode-metrics-debug/
 
 # Local agent instructions (not published)
 AGENTS.md
+.agents/

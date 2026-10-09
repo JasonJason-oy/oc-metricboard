@@ -70,7 +70,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node script/rewrite-runtime-imports.mjs",
     "test": "bun test",
     "init:prefs": "OPENCODE_TUI_PREFERENCES_FILE=${OPENCODE_TUI_PREFERENCES_FILE:-$HOME/.config/opencode/tui-preferences.jsonc} bun run src/scripts/init-tui-preferences.ts",
     "prepublishOnly": "npm run build && npm pack --dry-run"

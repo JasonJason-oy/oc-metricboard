@@ -123,7 +123,7 @@ For **tree scope** it additionally:
 
 ```bash
 npm install
-npm run build        # tsup bundle check
+npm run build        # tsc + host runtime module rewrite (see below)
 npm test             # bun test (requires bun)
 npm pack --dry-run   # verify publish contents
 ```
